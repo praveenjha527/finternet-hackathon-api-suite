@@ -1,0 +1,119 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Merchant {
+  id        String   @id @default(uuid())
+  name      String
+  apiKey    String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  paymentIntents PaymentIntent[]
+}
+
+model PaymentIntent {
+  id                    String   @id
+  object                String   @default("payment_intent")
+  status                String
+
+  // Merchant/Account
+  merchantId            String
+  merchant              Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  // Payment details
+  amount                String
+  currency              String
+  type                  String
+  description           String?
+
+  // Settlement
+  settlementMethod      String
+  settlementDestination String
+  settlementStatus      String?
+
+  // Blockchain
+  contractAddress       String?
+  transactionHash       String?
+  chainId               Int?
+
+  // EIP-712
+  typedData             Json?
+  signature             String?
+  signerAddress         String?
+
+  // Progress / phases (for Stripe-like status introspection)
+  phases                Json?
+
+  // Metadata
+  metadata              Json?
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  // Audit trail
+  auditLogs             AuditLog[]
+}
+
+model AuditLog {
+  id                    String   @id @default(uuid())
+  
+  // Related entities
+  paymentIntentId       String
+  paymentIntent         PaymentIntent @relation(fields: [paymentIntentId], references: [id], onDelete: Cascade)
+  merchantId            String
+  
+  // Event type and category
+  eventType             String   // e.g., "INTENT_CREATED", "BLOCKCHAIN_TX_SUBMITTED", "BLOCKCHAIN_TX_CONFIRMED", "SETTLEMENT_INITIATED", "SETTLEMENT_COMPLETED", "STATUS_CHANGED"
+  category              String   // "ON_CHAIN", "OFF_RAMP", "LIFECYCLE", "AUTHORIZATION"
+  
+  // Money movement details
+  amount                String?  // Amount involved in this event
+  currency              String?  // Currency code
+  
+  // On-chain details
+  blockchainTxHash      String?  // Blockchain transaction hash
+  blockchainTxStatus    String?  // "PENDING", "CONFIRMED", "FAILED"
+  contractAddress       String?  // Smart contract address
+  chainId               Int?     // Chain ID
+  blockNumber           BigInt?  // Block number (if confirmed)
+  blockTimestamp        DateTime? // Block timestamp
+  
+  // Off-ramp/Settlement details
+  settlementMethod      String?  // Settlement method used
+  settlementDestination String?  // Where funds were settled
+  settlementTxId        String?  // Settlement transaction ID (from offramp provider)
+  settlementStatus      String?  // Settlement status
+  
+  // Event details
+  fromStatus            String?  // Previous status (for status changes)
+  toStatus              String?  // New status (for status changes)
+  phase                 String?  // Payment phase (if applicable)
+  phaseStatus           String?  // Phase status
+  
+  // Actor information
+  actorType             String?  // "MERCHANT", "PAYER", "SYSTEM", "BLOCKCHAIN"
+  actorId               String?  // ID of the actor (merchant ID, payer address, etc.)
+  
+  // Additional context
+  metadata              Json?    // Additional event-specific data
+  
+  // Timestamps
+  createdAt             DateTime @default(now())
+  
+  @@index([paymentIntentId])
+  @@index([merchantId])
+  @@index([eventType])
+  @@index([category])
+  @@index([blockchainTxHash])
+  @@index([settlementTxId])
+  @@index([createdAt])
+}
+
+

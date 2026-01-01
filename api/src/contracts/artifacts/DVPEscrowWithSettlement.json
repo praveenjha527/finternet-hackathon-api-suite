@@ -1,0 +1,19 @@
+{
+  "contractName": "DVPEscrowWithSettlement",
+  "abi": [
+    {
+      "type": "function",
+      "name": "initiateDvP",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "intentId", "type": "string" },
+        { "name": "payer", "type": "address" },
+        { "name": "payee", "type": "address" },
+        { "name": "amount", "type": "uint256" }
+      ],
+      "outputs": []
+    }
+  ]
+}
+
+

@@ -1,0 +1,11 @@
+# Bun configuration for the project
+[install]
+# Package registry URL (default: npm registry)
+registry = "https://registry.npmjs.org/"
+
+# Prefer exact versions from package.json
+save-exact = false
+
+# Auto-install peer dependencies
+peer = true
+

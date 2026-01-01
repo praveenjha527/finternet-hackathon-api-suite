@@ -1,0 +1,18 @@
+{
+  "contractName": "ConsentedPull",
+  "abi": [
+    {
+      "type": "function",
+      "name": "initiatePull",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "intentId", "type": "string" },
+        { "name": "payer", "type": "address" },
+        { "name": "amount", "type": "uint256" }
+      ],
+      "outputs": []
+    }
+  ]
+}
+
+
