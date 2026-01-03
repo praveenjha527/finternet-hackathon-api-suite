@@ -1,23 +1,26 @@
-import { PaymentIntentStatus, SettlementStatus } from '../entities/payment-intent.entity';
+import {
+  PaymentIntentStatus,
+  SettlementStatus,
+} from "../entities/payment-intent.entity";
 
 /**
  * Payment Intent Event Types
  */
 export enum PaymentIntentEventType {
-  CREATED = 'payment_intent.created',
-  SIGNATURE_REQUIRED = 'payment_intent.signature_required',
-  SIGNATURE_VERIFIED = 'payment_intent.signature_verified',
-  BLOCKCHAIN_TX_SUBMITTED = 'payment_intent.blockchain_tx_submitted',
-  BLOCKCHAIN_TX_CONFIRMED = 'payment_intent.blockchain_tx_confirmed',
-  PROCESSING = 'payment_intent.processing',
-  SUCCEEDED = 'payment_intent.succeeded',
-  SETTLEMENT_INITIATED = 'payment_intent.settlement_initiated',
-  SETTLEMENT_COMPLETED = 'payment_intent.settlement_completed',
-  SETTLEMENT_FAILED = 'payment_intent.settlement_failed',
-  SETTLED = 'payment_intent.settled',
-  CANCELED = 'payment_intent.canceled',
-  FAILED = 'payment_intent.failed',
-  STATUS_CHANGED = 'payment_intent.status_changed',
+  CREATED = "payment_intent.created",
+  SIGNATURE_REQUIRED = "payment_intent.signature_required",
+  SIGNATURE_VERIFIED = "payment_intent.signature_verified",
+  BLOCKCHAIN_TX_SUBMITTED = "payment_intent.blockchain_tx_submitted",
+  BLOCKCHAIN_TX_CONFIRMED = "payment_intent.blockchain_tx_confirmed",
+  PROCESSING = "payment_intent.processing",
+  SUCCEEDED = "payment_intent.succeeded",
+  SETTLEMENT_INITIATED = "payment_intent.settlement_initiated",
+  SETTLEMENT_COMPLETED = "payment_intent.settlement_completed",
+  SETTLEMENT_FAILED = "payment_intent.settlement_failed",
+  SETTLED = "payment_intent.settled",
+  CANCELED = "payment_intent.canceled",
+  FAILED = "payment_intent.failed",
+  STATUS_CHANGED = "payment_intent.status_changed",
 }
 
 /**
@@ -104,4 +107,3 @@ export type PaymentIntentEvent =
   | SettlementInitiatedEvent
   | SettlementCompletedEvent
   | StatusChangedEvent;
-

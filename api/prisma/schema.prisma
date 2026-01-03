@@ -12,6 +12,11 @@ model Merchant {
   name      String
   apiKey    String   @unique
   isActive  Boolean  @default(true)
+  
+  // Contract addresses for payment types
+  dvpContractAddress          String?  // DvP (Delivery vs Payment) contract address
+  consentedPullContractAddress String? // Consented Pull contract address
+  
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

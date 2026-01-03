@@ -1,5 +1,5 @@
-import { HttpException, HttpStatus } from '@nestjs/common';
-import type { ApiError } from './responses';
+import { HttpException, HttpStatus } from "@nestjs/common";
+import type { ApiError } from "./responses";
 
 export class ApiException extends HttpException {
   constructor(
@@ -9,8 +9,8 @@ export class ApiException extends HttpException {
     param?: string,
   ) {
     const errorResponse: ApiError = {
-      object: 'error',
-      type: 'invalid_request_error',
+      object: "error",
+      type: "invalid_request_error",
       code,
       message,
       ...(param ? { param } : {}),
@@ -18,5 +18,3 @@ export class ApiException extends HttpException {
     super(errorResponse, statusCode);
   }
 }
-
-

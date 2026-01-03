@@ -1,4 +1,4 @@
-import { id, parseUnits } from 'ethers';
+import { id, parseUnits } from "ethers";
 
 export type PaymentIntentTypedData = {
   types: Record<string, Array<{ name: string; type: string }>>;
@@ -35,20 +35,20 @@ export function buildPaymentIntentTypedData(params: {
   return {
     types: {
       EIP712Domain: [
-        { name: 'name', type: 'string' },
-        { name: 'version', type: 'string' },
-        { name: 'chainId', type: 'uint256' },
-        { name: 'verifyingContract', type: 'address' },
+        { name: "name", type: "string" },
+        { name: "version", type: "string" },
+        { name: "chainId", type: "uint256" },
+        { name: "verifyingContract", type: "address" },
       ],
       PaymentIntent: [
-        { name: 'intentId', type: 'bytes32' },
-        { name: 'amount', type: 'uint256' },
-        { name: 'nonce', type: 'uint256' },
+        { name: "intentId", type: "bytes32" },
+        { name: "amount", type: "uint256" },
+        { name: "nonce", type: "uint256" },
       ],
     },
     domain: {
-      name: 'Finternet Payment Gateway',
-      version: '1',
+      name: "Finternet Payment Gateway",
+      version: "1",
       chainId: params.chainId,
       verifyingContract: params.verifyingContract,
     },
@@ -59,5 +59,3 @@ export function buildPaymentIntentTypedData(params: {
     },
   };
 }
-
-

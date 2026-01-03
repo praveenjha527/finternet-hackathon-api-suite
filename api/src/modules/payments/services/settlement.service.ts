@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable } from "@nestjs/common";
 
 @Injectable()
 export class SettlementService {
@@ -44,5 +44,3 @@ export class SettlementService {
     };
   }
 }
-
-

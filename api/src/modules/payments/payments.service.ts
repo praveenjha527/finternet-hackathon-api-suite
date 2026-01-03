@@ -1,14 +1,17 @@
-import { Injectable } from '@nestjs/common';
-import { CreatePaymentIntentDto } from './dto/create-payment-intent.dto';
-import { ConfirmPaymentIntentDto } from './dto/confirm-payment-intent.dto';
-import type { PaymentIntentEntity } from './entities/payment-intent.entity';
-import { IntentService } from './services/intent.service';
+import { Injectable } from "@nestjs/common";
+import { CreatePaymentIntentDto } from "./dto/create-payment-intent.dto";
+import { ConfirmPaymentIntentDto } from "./dto/confirm-payment-intent.dto";
+import type { PaymentIntentEntity } from "./entities/payment-intent.entity";
+import { IntentService } from "./services/intent.service";
 
 @Injectable()
 export class PaymentsService {
   constructor(private readonly intentService: IntentService) {}
 
-  async createIntent(dto: CreatePaymentIntentDto, merchantId: string): Promise<PaymentIntentEntity> {
+  async createIntent(
+    dto: CreatePaymentIntentDto,
+    merchantId: string,
+  ): Promise<PaymentIntentEntity> {
     return this.intentService.createIntent(dto, merchantId);
   }
 
@@ -17,12 +20,26 @@ export class PaymentsService {
     dto: ConfirmPaymentIntentDto,
     merchantId: string,
   ): Promise<PaymentIntentEntity> {
-    return this.intentService.confirmIntent(intentId, dto.signature, dto.payerAddress, merchantId);
+    return this.intentService.confirmIntent(
+      intentId,
+      dto.signature,
+      dto.payerAddress,
+      merchantId,
+    );
   }
 
-  async getIntent(intentId: string, merchantId: string): Promise<PaymentIntentEntity> {
+  async getIntent(
+    intentId: string,
+    merchantId: string,
+  ): Promise<PaymentIntentEntity> {
     return this.intentService.getIntent(intentId, merchantId);
   }
+
+  /**
+   * Get payment intent without merchant authentication (public endpoint).
+   * Used by the frontend payment page to fetch payment details.
+   */
+  async getPublicIntent(intentId: string): Promise<PaymentIntentEntity> {
+    return this.intentService.getPublicIntent(intentId);
+  }
 }
-
-

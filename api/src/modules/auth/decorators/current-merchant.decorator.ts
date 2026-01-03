@@ -1,4 +1,4 @@
-import { createParamDecorator, ExecutionContext } from '@nestjs/common';
+import { createParamDecorator, ExecutionContext } from "@nestjs/common";
 
 /**
  * Decorator to extract the current merchant from the request.
@@ -12,4 +12,3 @@ export const CurrentMerchant = createParamDecorator(
     return request.merchant;
   },
 );
-

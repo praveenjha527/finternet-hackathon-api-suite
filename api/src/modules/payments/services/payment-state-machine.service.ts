@@ -1,6 +1,9 @@
-import { Injectable } from '@nestjs/common';
-import { PaymentIntentStatus, SettlementStatus } from '../entities/payment-intent.entity';
-import { ApiException } from '../../../common/exceptions';
+import { Injectable } from "@nestjs/common";
+import {
+  PaymentIntentStatus,
+  SettlementStatus,
+} from "../entities/payment-intent.entity";
+import { ApiException } from "../../../common/exceptions";
 
 /**
  * State machine for Payment Intent status transitions.
@@ -12,16 +15,41 @@ export class PaymentStateMachineService {
    * Valid state transitions map
    * Key: current status, Value: array of valid next statuses
    */
-  private readonly validTransitions: Map<PaymentIntentStatus, PaymentIntentStatus[]> = new Map([
-    [PaymentIntentStatus.INITIATED, [PaymentIntentStatus.REQUIRES_SIGNATURE, PaymentIntentStatus.PROCESSING, PaymentIntentStatus.CANCELED]],
-    [PaymentIntentStatus.REQUIRES_SIGNATURE, [PaymentIntentStatus.PROCESSING, PaymentIntentStatus.CANCELED]],
-    [PaymentIntentStatus.PROCESSING, [PaymentIntentStatus.SUCCEEDED, PaymentIntentStatus.FAILED, PaymentIntentStatus.CANCELED, PaymentIntentStatus.REQUIRES_ACTION]],
-    [PaymentIntentStatus.SUCCEEDED, [PaymentIntentStatus.SETTLED, PaymentIntentStatus.FAILED]],
+  private readonly validTransitions: Map<
+    PaymentIntentStatus,
+    PaymentIntentStatus[]
+  > = new Map([
+    [
+      PaymentIntentStatus.INITIATED,
+      [
+        PaymentIntentStatus.REQUIRES_SIGNATURE,
+        PaymentIntentStatus.PROCESSING,
+        PaymentIntentStatus.CANCELED,
+      ],
+    ],
+    [
+      PaymentIntentStatus.REQUIRES_SIGNATURE,
+      [PaymentIntentStatus.PROCESSING, PaymentIntentStatus.CANCELED],
+    ],
+    [
+      PaymentIntentStatus.PROCESSING,
+      [
+        PaymentIntentStatus.SUCCEEDED,
+        PaymentIntentStatus.CANCELED,
+        PaymentIntentStatus.REQUIRES_ACTION,
+      ],
+    ],
+    [
+      PaymentIntentStatus.SUCCEEDED,
+      [PaymentIntentStatus.SETTLED, PaymentIntentStatus.REQUIRES_ACTION],
+    ],
     [PaymentIntentStatus.SETTLED, [PaymentIntentStatus.FINAL]],
-    [PaymentIntentStatus.FAILED, []], // Terminal state
     [PaymentIntentStatus.CANCELED, []], // Terminal state
     [PaymentIntentStatus.FINAL, []], // Terminal state
-    [PaymentIntentStatus.REQUIRES_ACTION, [PaymentIntentStatus.PROCESSING, PaymentIntentStatus.CANCELED]],
+    [
+      PaymentIntentStatus.REQUIRES_ACTION,
+      [PaymentIntentStatus.PROCESSING, PaymentIntentStatus.CANCELED],
+    ],
   ]);
 
   /**
@@ -50,8 +78,8 @@ export class PaymentStateMachineService {
 
     if (!this.canTransition(currentStatus, newStatus)) {
       throw new ApiException(
-        'invalid_state_transition',
-        `Cannot transition from ${currentStatus} to ${newStatus}. ${context?.reason || ''}`,
+        "invalid_state_transition",
+        `Cannot transition from ${currentStatus} to ${newStatus}. ${context?.reason || ""}`,
         400,
       );
     }
@@ -62,7 +90,9 @@ export class PaymentStateMachineService {
   /**
    * Get next valid states for a given status
    */
-  getNextValidStates(currentStatus: PaymentIntentStatus): PaymentIntentStatus[] {
+  getNextValidStates(
+    currentStatus: PaymentIntentStatus,
+  ): PaymentIntentStatus[] {
     return this.validTransitions.get(currentStatus) || [];
   }
 
@@ -107,7 +137,7 @@ export class PaymentStateMachineService {
           return PaymentIntentStatus.SETTLED;
         }
         if (context.settlementStatus === SettlementStatus.FAILED) {
-          return PaymentIntentStatus.FAILED;
+          return PaymentIntentStatus.REQUIRES_ACTION;
         }
         return null;
 
@@ -119,4 +149,3 @@ export class PaymentStateMachineService {
     }
   }
 }
-

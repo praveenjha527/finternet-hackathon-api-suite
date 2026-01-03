@@ -1,7 +1,17 @@
-import { Injectable } from '@nestjs/common';
-import { Contract, JsonRpcProvider, Wallet, hexlify, parseUnits, randomBytes } from 'ethers';
-import { ApiException } from '../../../common/exceptions';
-import { ConsentedPullAbi, DVPEscrowWithSettlementAbi } from '../../../contracts/types';
+import { Injectable } from "@nestjs/common";
+import {
+  Contract,
+  JsonRpcProvider,
+  Wallet,
+  hexlify,
+  parseUnits,
+  randomBytes,
+} from "ethers";
+import { ApiException } from "../../../common/exceptions";
+import {
+  ConsentedPullAbi,
+  DVPEscrowWithSettlementAbi,
+} from "../../../contracts/types";
 
 type TxSubmitResult = {
   transactionHash: string;
@@ -10,11 +20,20 @@ type TxSubmitResult = {
 };
 
 type DvpContract = Contract & {
-  initiateDvP: (intentId: string, payer: string, payee: string, amount: bigint) => Promise<{ hash: string }>;
+  initiateDvP: (
+    intentId: string,
+    payer: string,
+    payee: string,
+    amount: bigint,
+  ) => Promise<{ hash: string }>;
 };
 
 type ConsentedPullContract = Contract & {
-  initiatePull: (intentId: string, payer: string, amount: bigint) => Promise<{ hash: string }>;
+  initiatePull: (
+    intentId: string,
+    payer: string,
+    amount: bigint,
+  ) => Promise<{ hash: string }>;
 };
 
 @Injectable()
@@ -60,10 +79,14 @@ export class BlockchainService {
     payerAddress: string;
     amount: string;
     decimals: number;
+    contractAddress: string;
   }): Promise<TxSubmitResult> {
-    const contractAddress = process.env.DvP_CONTRACT_ADDRESS;
-    if (!contractAddress) {
-      return this.mockTx('0x0000000000000000000000000000000000000000');
+    const { contractAddress } = params;
+    if (
+      !contractAddress ||
+      contractAddress === "0x0000000000000000000000000000000000000000"
+    ) {
+      return this.mockTx("0x0000000000000000000000000000000000000000");
     }
 
     if (this.isMockMode()) {
@@ -89,9 +112,9 @@ export class BlockchainService {
         contractAddress,
       };
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
+      const message = err instanceof Error ? err.message : "Unknown error";
       throw new ApiException(
-        'contract_execution_failed',
+        "contract_execution_failed",
         `Failed to execute DvP: ${message}`,
         500,
       );
@@ -103,10 +126,14 @@ export class BlockchainService {
     payerAddress: string;
     amount: string;
     decimals: number;
+    contractAddress: string;
   }): Promise<TxSubmitResult> {
-    const contractAddress = process.env.CONSENTED_PULL_CONTRACT_ADDRESS;
-    if (!contractAddress) {
-      return this.mockTx('0x0000000000000000000000000000000000000000');
+    const { contractAddress } = params;
+    if (
+      !contractAddress ||
+      contractAddress === "0x0000000000000000000000000000000000000000"
+    ) {
+      return this.mockTx("0x0000000000000000000000000000000000000000");
     }
 
     if (this.isMockMode()) {
@@ -130,9 +157,9 @@ export class BlockchainService {
         contractAddress,
       };
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
+      const message = err instanceof Error ? err.message : "Unknown error";
       throw new ApiException(
-        'contract_execution_failed',
+        "contract_execution_failed",
         `Failed to execute ConsentedPull: ${message}`,
         500,
       );
@@ -158,5 +185,3 @@ export class BlockchainService {
     };
   }
 }
-
-

@@ -1,16 +1,16 @@
-import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../../../prisma/prisma.service';
-import { Prisma } from '@prisma/client';
+import { Injectable } from "@nestjs/common";
+import { PrismaService } from "../../../prisma/prisma.service";
+import { Prisma } from "@prisma/client";
 
 type AuditLogData = {
   paymentIntentId: string;
   merchantId: string;
   eventType: string;
-  category: 'ON_CHAIN' | 'OFF_RAMP' | 'LIFECYCLE' | 'AUTHORIZATION';
+  category: "ON_CHAIN" | "OFF_RAMP" | "LIFECYCLE" | "AUTHORIZATION";
   amount?: string;
   currency?: string;
   blockchainTxHash?: string;
-  blockchainTxStatus?: 'PENDING' | 'CONFIRMED' | 'FAILED';
+  blockchainTxStatus?: "PENDING" | "CONFIRMED" | "FAILED";
   contractAddress?: string;
   chainId?: number;
   blockNumber?: bigint;
@@ -23,7 +23,7 @@ type AuditLogData = {
   toStatus?: string;
   phase?: string;
   phaseStatus?: string;
-  actorType?: 'MERCHANT' | 'PAYER' | 'SYSTEM' | 'BLOCKCHAIN';
+  actorType?: "MERCHANT" | "PAYER" | "SYSTEM" | "BLOCKCHAIN";
   actorId?: string;
   metadata?: Record<string, unknown>;
 };
@@ -62,12 +62,14 @@ export class AuditService {
           phaseStatus: data.phaseStatus,
           actorType: data.actorType,
           actorId: data.actorId,
-          metadata: data.metadata ? (data.metadata as Prisma.InputJsonValue) : undefined,
+          metadata: data.metadata
+            ? (data.metadata as Prisma.InputJsonValue)
+            : undefined,
         },
       });
     } catch (error) {
       // Log error but don't throw - audit logging should not break the main flow
-      console.error('Failed to create audit log:', error);
+      console.error("Failed to create audit log:", error);
     }
   }
 
@@ -86,14 +88,14 @@ export class AuditService {
     await this.log({
       paymentIntentId: params.paymentIntentId,
       merchantId: params.merchantId,
-      eventType: 'INTENT_CREATED',
-      category: 'LIFECYCLE',
+      eventType: "INTENT_CREATED",
+      category: "LIFECYCLE",
       amount: params.amount,
       currency: params.currency,
       settlementMethod: params.settlementMethod,
       settlementDestination: params.settlementDestination,
-      toStatus: 'INITIATED',
-      actorType: 'MERCHANT',
+      toStatus: "INITIATED",
+      actorType: "MERCHANT",
       actorId: params.merchantId,
       metadata: {
         paymentType: params.type,
@@ -117,19 +119,19 @@ export class AuditService {
     await this.log({
       paymentIntentId: params.paymentIntentId,
       merchantId: params.merchantId,
-      eventType: 'BLOCKCHAIN_TX_SUBMITTED',
-      category: 'ON_CHAIN',
+      eventType: "BLOCKCHAIN_TX_SUBMITTED",
+      category: "ON_CHAIN",
       amount: params.amount,
       currency: params.currency,
       blockchainTxHash: params.transactionHash,
-      blockchainTxStatus: 'PENDING',
+      blockchainTxStatus: "PENDING",
       contractAddress: params.contractAddress,
       chainId: params.chainId,
-      fromStatus: 'INITIATED',
-      toStatus: 'PROCESSING',
-      phase: 'BLOCKCHAIN_CONFIRMATION',
-      phaseStatus: 'IN_PROGRESS',
-      actorType: 'PAYER',
+      fromStatus: "INITIATED",
+      toStatus: "PROCESSING",
+      phase: "BLOCKCHAIN_CONFIRMATION",
+      phaseStatus: "IN_PROGRESS",
+      actorType: "PAYER",
       actorId: params.payerAddress,
     });
   }
@@ -147,16 +149,16 @@ export class AuditService {
     await this.log({
       paymentIntentId: params.paymentIntentId,
       merchantId: params.merchantId,
-      eventType: 'BLOCKCHAIN_TX_CONFIRMED',
-      category: 'ON_CHAIN',
+      eventType: "BLOCKCHAIN_TX_CONFIRMED",
+      category: "ON_CHAIN",
       blockchainTxHash: params.transactionHash,
-      blockchainTxStatus: 'CONFIRMED',
+      blockchainTxStatus: "CONFIRMED",
       blockNumber: params.blockNumber,
       blockTimestamp: params.blockTimestamp,
-      toStatus: 'SUCCEEDED',
-      phase: 'BLOCKCHAIN_CONFIRMATION',
-      phaseStatus: 'COMPLETED',
-      actorType: 'BLOCKCHAIN',
+      toStatus: "SUCCEEDED",
+      phase: "BLOCKCHAIN_CONFIRMATION",
+      phaseStatus: "COMPLETED",
+      actorType: "BLOCKCHAIN",
     });
   }
 
@@ -174,17 +176,17 @@ export class AuditService {
     await this.log({
       paymentIntentId: params.paymentIntentId,
       merchantId: params.merchantId,
-      eventType: 'SETTLEMENT_INITIATED',
-      category: 'OFF_RAMP',
+      eventType: "SETTLEMENT_INITIATED",
+      category: "OFF_RAMP",
       amount: params.amount,
       currency: params.currency,
       settlementMethod: params.settlementMethod,
       settlementDestination: params.settlementDestination,
-      settlementStatus: 'IN_PROGRESS',
-      toStatus: 'SUCCEEDED',
-      phase: 'SETTLEMENT',
-      phaseStatus: 'IN_PROGRESS',
-      actorType: 'SYSTEM',
+      settlementStatus: "IN_PROGRESS",
+      toStatus: "SUCCEEDED",
+      phase: "SETTLEMENT",
+      phaseStatus: "IN_PROGRESS",
+      actorType: "SYSTEM",
     });
   }
 
@@ -203,19 +205,19 @@ export class AuditService {
     await this.log({
       paymentIntentId: params.paymentIntentId,
       merchantId: params.merchantId,
-      eventType: 'SETTLEMENT_COMPLETED',
-      category: 'OFF_RAMP',
+      eventType: "SETTLEMENT_COMPLETED",
+      category: "OFF_RAMP",
       amount: params.amount,
       currency: params.currency,
       settlementMethod: params.settlementMethod,
       settlementDestination: params.settlementDestination,
       settlementTxId: params.settlementTxId,
-      settlementStatus: 'COMPLETED',
-      fromStatus: 'SUCCEEDED',
-      toStatus: 'SETTLED',
-      phase: 'SETTLEMENT',
-      phaseStatus: 'COMPLETED',
-      actorType: 'SYSTEM',
+      settlementStatus: "COMPLETED",
+      fromStatus: "SUCCEEDED",
+      toStatus: "SETTLED",
+      phase: "SETTLEMENT",
+      phaseStatus: "COMPLETED",
+      actorType: "SYSTEM",
     });
   }
 
@@ -233,14 +235,13 @@ export class AuditService {
     await this.log({
       paymentIntentId: params.paymentIntentId,
       merchantId: params.merchantId,
-      eventType: 'STATUS_CHANGED',
-      category: 'LIFECYCLE',
+      eventType: "STATUS_CHANGED",
+      category: "LIFECYCLE",
       fromStatus: params.fromStatus,
       toStatus: params.toStatus,
       phase: params.phase,
       phaseStatus: params.phaseStatus,
-      actorType: 'SYSTEM',
+      actorType: "SYSTEM",
     });
   }
 }
-

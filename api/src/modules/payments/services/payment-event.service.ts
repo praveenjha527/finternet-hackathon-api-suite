@@ -1,5 +1,5 @@
-import { Injectable } from '@nestjs/common';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { Injectable } from "@nestjs/common";
+import { EventEmitter2 } from "@nestjs/event-emitter";
 import {
   PaymentIntentEvent,
   PaymentIntentEventType,
@@ -9,8 +9,11 @@ import {
   SettlementInitiatedEvent,
   SettlementCompletedEvent,
   StatusChangedEvent,
-} from '../events/payment-intent.events';
-import { PaymentIntentStatus, SettlementStatus } from '../entities/payment-intent.entity';
+} from "../events/payment-intent.events";
+import {
+  PaymentIntentStatus,
+  SettlementStatus,
+} from "../entities/payment-intent.entity";
 
 /**
  * Service for emitting payment intent events.
@@ -198,4 +201,3 @@ export class PaymentEventService {
     await this.emit(event);
   }
 }
-

@@ -1,6 +1,6 @@
 export interface ApiError {
-  object: 'error';
-  type: 'invalid_request_error';
+  object: "error";
+  type: "invalid_request_error";
   code: string;
   message: string;
   param?: string;
@@ -16,5 +16,3 @@ export interface ApiResponse<T> {
   created?: number;
   updated?: number;
 }
-
-

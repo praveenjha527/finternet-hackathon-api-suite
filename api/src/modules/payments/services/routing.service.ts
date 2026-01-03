@@ -1,21 +1,21 @@
-import { Injectable } from '@nestjs/common';
-import { ApiException } from '../../../common/exceptions';
+import { Injectable } from "@nestjs/common";
+import { ApiException } from "../../../common/exceptions";
 
 @Injectable()
 export class RoutingService {
   private readonly allowedSettlementMethods = new Set<string>([
-    'OFF_RAMP_TO_RTP',
-    'OFF_RAMP_TO_BANK',
-    'OFF_RAMP_MOCK',
+    "OFF_RAMP_TO_RTP",
+    "OFF_RAMP_TO_BANK",
+    "OFF_RAMP_MOCK",
   ]);
 
   validateSettlementMethod(settlementMethod: string) {
     if (!this.allowedSettlementMethods.has(settlementMethod)) {
       throw new ApiException(
-        'invalid_settlement_method',
+        "invalid_settlement_method",
         `Unsupported settlementMethod: ${settlementMethod}`,
         400,
-        'settlementMethod',
+        "settlementMethod",
       );
     }
   }
@@ -25,10 +25,8 @@ export class RoutingService {
    */
   getRouteEstimates() {
     return {
-      estimatedFee: '2.50',
-      estimatedDeliveryTime: '15s',
+      estimatedFee: "2.50",
+      estimatedDeliveryTime: "15s",
     };
   }
 }
-
-

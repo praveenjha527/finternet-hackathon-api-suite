@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 
 export class PaymentIntentResponseDto {
   @ApiProperty()
@@ -31,5 +31,3 @@ export class PaymentIntentResponseDto {
   @ApiPropertyOptional()
   metadata?: Record<string, unknown> | null;
 }
-
-

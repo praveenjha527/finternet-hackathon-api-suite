@@ -1,24 +1,25 @@
-import { Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
-import { isAddress, verifyTypedData } from 'ethers';
-import { v4 as uuidv4 } from 'uuid';
-import { PrismaService } from '../../../prisma/prisma.service';
-import { ApiException } from '../../../common/exceptions';
-import { buildPaymentIntentTypedData } from '../../../schema/eip712.schema';
-import { CreatePaymentIntentDto } from '../dto/create-payment-intent.dto';
+import { Injectable } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
+import { isAddress, verifyTypedData } from "ethers";
+import { v4 as uuidv4 } from "uuid";
+import { PrismaService } from "../../../prisma/prisma.service";
+import { ApiException } from "../../../common/exceptions";
+import { buildPaymentIntentTypedData } from "../../../schema/eip712.schema";
+import { CreatePaymentIntentDto } from "../dto/create-payment-intent.dto";
 import {
   PaymentIntentEntity,
   PaymentIntentPhase,
   PaymentIntentStatus,
   SettlementStatus,
-} from '../entities/payment-intent.entity';
-import { RoutingService } from './routing.service';
-import { BlockchainService } from './blockchain.service';
-import { ComplianceService } from './compliance.service';
-import { SettlementService } from './settlement.service';
-import { AuditService } from './audit.service';
-import { PaymentStateMachineService } from './payment-state-machine.service';
-import { PaymentEventService } from './payment-event.service';
+} from "../entities/payment-intent.entity";
+import { RoutingService } from "./routing.service";
+import { BlockchainService } from "./blockchain.service";
+import { ComplianceService } from "./compliance.service";
+import { SettlementService } from "./settlement.service";
+import { AuditService } from "./audit.service";
+import { PaymentStateMachineService } from "./payment-state-machine.service";
+import { PaymentEventService } from "./payment-event.service";
+import { SettlementQueueService } from "../queues/settlement-queue.service";
 
 const SEPOLIA_CHAIN_ID = 11155111;
 const DEFAULT_DECIMALS = 6; // USDC
@@ -28,7 +29,7 @@ function toUnixSeconds(d: Date): number {
 }
 
 function asObjectRecord(v: unknown): Record<string, unknown> | null {
-  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
   return v as Record<string, unknown>;
 }
 
@@ -43,16 +44,39 @@ export class IntentService {
     private readonly audit: AuditService,
     private readonly stateMachine: PaymentStateMachineService,
     private readonly events: PaymentEventService,
+    private readonly settlementQueue: SettlementQueueService,
   ) {}
 
-  async createIntent(dto: CreatePaymentIntentDto, merchantId: string): Promise<PaymentIntentEntity> {
+  async createIntent(
+    dto: CreatePaymentIntentDto,
+    merchantId: string,
+  ): Promise<PaymentIntentEntity> {
     this.routing.validateSettlementMethod(dto.settlementMethod);
     await this.compliance.validateIntent();
 
     const id = `intent_${uuidv4()}`;
     const chainId = SEPOLIA_CHAIN_ID;
 
-    const contractAddress = this.getContractAddressForType(dto.type);
+    // Get merchant to retrieve contract addresses
+    const merchant = (await this.prisma.merchant.findUnique({
+      where: { id: merchantId },
+    })) as {
+      dvpContractAddress: string | null;
+      consentedPullContractAddress: string | null;
+    } | null;
+
+    if (!merchant) {
+      throw new ApiException(
+        "resource_missing",
+        `Merchant not found: ${merchantId}`,
+        404,
+      );
+    }
+
+    const contractAddress = this.getContractAddressForType(dto.type, {
+      dvpContractAddress: merchant.dvpContractAddress,
+      consentedPullContractAddress: merchant.consentedPullContractAddress,
+    });
     const typedData = buildPaymentIntentTypedData({
       intentId: id,
       amount: dto.amount,
@@ -63,7 +87,7 @@ export class IntentService {
     });
 
     const phases: PaymentIntentPhase[] = [
-      { phase: 'SIGNATURE_VERIFICATION', status: 'IN_PROGRESS' },
+      { phase: "SIGNATURE_VERIFICATION", status: "IN_PROGRESS" },
     ];
 
     const created = await this.prisma.paymentIntent.create({
@@ -113,9 +137,12 @@ export class IntentService {
 
     const estimates = this.routing.getRouteEstimates();
 
+    // Generate wallet connection URL for user to execute payment
+    const paymentUrl = this.generatePaymentUrl(created.id);
+
     return {
       id: created.id,
-      object: 'payment_intent',
+      object: "payment_intent",
       status: created.status as PaymentIntentStatus,
       amount: created.amount,
       currency: created.currency,
@@ -129,23 +156,35 @@ export class IntentService {
       typedData: created.typedData,
       phases: (created.phases as PaymentIntentPhase[] | null) ?? null,
       metadata: asObjectRecord(created.metadata),
+      paymentUrl,
       created: toUnixSeconds(created.createdAt),
       updated: toUnixSeconds(created.updatedAt),
       ...(estimates ? estimates : {}),
     };
   }
 
-  async confirmIntent(intentId: string, signature: string, payerAddress: string, merchantId: string) {
-    const existing = await this.prisma.paymentIntent.findUnique({ where: { id: intentId } });
+  async confirmIntent(
+    intentId: string,
+    signature: string,
+    payerAddress: string,
+    merchantId: string,
+  ) {
+    const existing = await this.prisma.paymentIntent.findUnique({
+      where: { id: intentId },
+    });
     if (!existing) {
-      throw new ApiException('resource_missing', `Payment intent not found: ${intentId}`, 404);
+      throw new ApiException(
+        "resource_missing",
+        `Payment intent not found: ${intentId}`,
+        404,
+      );
     }
 
     // Authorization: verify merchant owns this payment intent
     if ((existing as any).merchantId !== merchantId) {
       throw new ApiException(
-        'forbidden',
-        'You do not have permission to access this payment intent',
+        "forbidden",
+        "You do not have permission to access this payment intent",
         403,
       );
     }
@@ -153,10 +192,10 @@ export class IntentService {
     // Use state machine to validate transition
     const currentStatus = existing.status as PaymentIntentStatus;
     const targetStatus = PaymentIntentStatus.PROCESSING;
-    
+
     // Validate state transition
     this.stateMachine.transition(currentStatus, targetStatus, {
-      reason: 'Signature verified, moving to processing',
+      reason: "Signature verified, moving to processing",
     });
 
     const typedData = existing.typedData as unknown as {
@@ -179,10 +218,10 @@ export class IntentService {
 
     if (recovered.toLowerCase() !== payerAddress.toLowerCase()) {
       throw new ApiException(
-        'signature_verification_failed',
-        'Signature does not match payer address',
+        "signature_verification_failed",
+        "Signature does not match payer address",
         400,
-        'signature',
+        "signature",
       );
     }
 
@@ -190,25 +229,49 @@ export class IntentService {
     const now = Math.floor(Date.now() / 1000);
 
     const updatedPhases: PaymentIntentPhase[] = [
-      ...phases.filter((p) => p.phase !== 'SIGNATURE_VERIFICATION'),
-      { phase: 'SIGNATURE_VERIFICATION', status: 'COMPLETED', timestamp: now },
-      { phase: 'BLOCKCHAIN_CONFIRMATION', status: 'IN_PROGRESS' },
+      ...phases.filter((p) => p.phase !== "SIGNATURE_VERIFICATION"),
+      { phase: "SIGNATURE_VERIFICATION", status: "COMPLETED", timestamp: now },
+      { phase: "BLOCKCHAIN_CONFIRMATION", status: "IN_PROGRESS" },
     ];
 
     const decimals = DEFAULT_DECIMALS;
+
+    // Get merchant to retrieve contract addresses
+    const merchantRecord = (await this.prisma.merchant.findUnique({
+      where: { id: merchantId },
+    })) as {
+      dvpContractAddress: string | null;
+      consentedPullContractAddress: string | null;
+    } | null;
+
+    if (!merchantRecord) {
+      throw new ApiException(
+        "resource_missing",
+        `Merchant not found: ${merchantId}`,
+        404,
+      );
+    }
+
+    const contractAddress = this.getContractAddressForType(existing.type, {
+      dvpContractAddress: merchantRecord.dvpContractAddress,
+      consentedPullContractAddress: merchantRecord.consentedPullContractAddress,
+    });
+
     const submit =
-      existing.type === 'DELIVERY_VS_PAYMENT'
+      existing.type === "DELIVERY_VS_PAYMENT"
         ? await this.blockchain.submitDvP({
             intentId: existing.id,
             payerAddress,
             amount: existing.amount,
             decimals,
+            contractAddress,
           })
         : await this.blockchain.submitConsentedPull({
             intentId: existing.id,
             payerAddress,
             amount: existing.amount,
             decimals,
+            contractAddress,
           });
 
     const saved = await this.prisma.paymentIntent.update({
@@ -244,7 +307,7 @@ export class IntentService {
       toStatus: targetStatus,
       amount: saved.amount,
       currency: saved.currency,
-      reason: 'Signature verified',
+      reason: "Signature verified",
     });
 
     // Emit blockchain transaction submitted event
@@ -263,33 +326,51 @@ export class IntentService {
     return this.toEntity(saved);
   }
 
-  async getIntent(intentId: string, merchantId: string): Promise<PaymentIntentEntity> {
-    const existing = await this.prisma.paymentIntent.findUnique({ where: { id: intentId } });
+  async getIntent(
+    intentId: string,
+    merchantId: string,
+  ): Promise<PaymentIntentEntity> {
+    const existing = await this.prisma.paymentIntent.findUnique({
+      where: { id: intentId },
+    });
     if (!existing) {
-      throw new ApiException('resource_missing', `Payment intent not found: ${intentId}`, 404);
+      throw new ApiException(
+        "resource_missing",
+        `Payment intent not found: ${intentId}`,
+        404,
+      );
     }
 
     // Authorization: verify merchant owns this payment intent
     if ((existing as any).merchantId !== merchantId) {
       throw new ApiException(
-        'forbidden',
-        'You do not have permission to access this payment intent',
+        "forbidden",
+        "You do not have permission to access this payment intent",
         403,
       );
     }
 
     // If we have a tx hash and are still processing, opportunistically advance status after 5 confs.
-    if (existing.status === PaymentIntentStatus.PROCESSING && existing.transactionHash) {
-      const confirmations = await this.blockchain.getConfirmations(existing.transactionHash);
+    if (
+      existing.status === PaymentIntentStatus.PROCESSING &&
+      existing.transactionHash
+    ) {
+      const confirmations = await this.blockchain.getConfirmations(
+        existing.transactionHash,
+      );
       if (confirmations >= 5) {
         const phases = (existing.phases as PaymentIntentPhase[] | null) ?? [];
         const now = Math.floor(Date.now() / 1000);
         const updatedPhases: PaymentIntentPhase[] = [
-          ...phases.filter((p) => p.phase !== 'BLOCKCHAIN_CONFIRMATION'),
-          { phase: 'BLOCKCHAIN_CONFIRMATION', status: 'COMPLETED', timestamp: now },
+          ...phases.filter((p) => p.phase !== "BLOCKCHAIN_CONFIRMATION"),
+          {
+            phase: "BLOCKCHAIN_CONFIRMATION",
+            status: "COMPLETED",
+            timestamp: now,
+          },
           // DvP demo phase (kept aligned with spec example)
-          { phase: 'ESCROW_LOCKED', status: 'COMPLETED', timestamp: now },
-          { phase: 'AWAITING_DELIVERY_PROOF', status: 'IN_PROGRESS' },
+          { phase: "ESCROW_LOCKED", status: "COMPLETED", timestamp: now },
+          { phase: "AWAITING_DELIVERY_PROOF", status: "IN_PROGRESS" },
         ];
 
         const saved = await this.prisma.paymentIntent.update({
@@ -308,25 +389,130 @@ export class IntentService {
           transactionHash: saved.transactionHash!,
         });
 
-        // Start settlement processing asynchronously if settlement method is OFF_RAMP_MOCK
-        if (saved.settlementMethod === 'OFF_RAMP_MOCK') {
-          this.startSettlementProcessing(saved.id, saved.settlementMethod, saved.settlementDestination, saved.amount, saved.currency).catch((err) => {
-            console.error(`Error starting settlement processing for intent ${saved.id}:`, err);
-          });
+        // Enqueue settlement job if settlement method is OFF_RAMP_MOCK
+        if (saved.settlementMethod === "OFF_RAMP_MOCK") {
+          await this.enqueueSettlementJob(
+            saved.id,
+            (saved as any).merchantId,
+            saved.settlementMethod,
+            saved.settlementDestination,
+            saved.amount,
+            saved.currency,
+          );
         }
 
         return this.toEntity(saved);
       }
     }
 
-    // Check and process settlement for intents that are already SUCCEEDED
-    const settlementProcessed = await this.checkAndProcessSettlement(existing);
-    
-    // Reload to get updated settlement status if settlement was processed
-    if (settlementProcessed) {
-      const updated = await this.prisma.paymentIntent.findUnique({ where: { id: intentId } });
-      if (updated) {
-        return this.toEntity(updated);
+    return this.toEntity(existing);
+  }
+
+  /**
+   * Get payment intent without merchant authentication (public endpoint).
+   * Used by the frontend payment page to fetch payment details.
+   * Only returns payment intent if it exists (no merchant ownership check).
+   */
+  async getPublicIntent(intentId: string): Promise<PaymentIntentEntity> {
+    const existing = await this.prisma.paymentIntent.findUnique({
+      where: { id: intentId },
+    });
+    if (!existing) {
+      throw new ApiException(
+        "resource_missing",
+        `Payment intent not found: ${intentId}`,
+        404,
+      );
+    }
+
+    // For public endpoint, we don't check merchant ownership
+    // This allows the frontend to fetch payment details for wallet connection
+    // The payment intent ID is effectively the authentication token
+
+    // If we have a tx hash and are still processing, opportunistically advance status after 5 confs.
+    if (
+      existing.status === PaymentIntentStatus.PROCESSING &&
+      existing.transactionHash
+    ) {
+      const confirmations = await this.blockchain.getConfirmations(
+        existing.transactionHash,
+      );
+      if (confirmations >= 5) {
+        const phases = (existing.phases as PaymentIntentPhase[] | null) ?? [];
+        const now = Math.floor(Date.now() / 1000);
+        const updatedPhases: PaymentIntentPhase[] = [
+          ...phases.filter((p) => p.phase !== "BLOCKCHAIN_CONFIRMATION"),
+          {
+            phase: "BLOCKCHAIN_CONFIRMATION",
+            status: "COMPLETED",
+            timestamp: now,
+          },
+          // DvP demo phase (kept aligned with spec example)
+          { phase: "ESCROW_LOCKED", status: "COMPLETED", timestamp: now },
+          {
+            phase: "AWAITING_DELIVERY_PROOF",
+            status: "IN_PROGRESS",
+          },
+        ];
+
+        const currentStatus = existing.status as PaymentIntentStatus;
+        const targetStatus = this.stateMachine.transition(
+          currentStatus,
+          PaymentIntentStatus.SUCCEEDED,
+          { reason: "Blockchain confirmed" },
+        );
+
+        const saved = await this.prisma.paymentIntent.update({
+          where: { id: existing.id },
+          data: {
+            status: targetStatus,
+            phases: updatedPhases,
+            settlementStatus: SettlementStatus.IN_PROGRESS,
+          },
+        });
+
+        // Log blockchain transaction confirmed
+        await this.audit.logBlockchainTxConfirmed({
+          paymentIntentId: saved.id,
+          merchantId: (saved as any).merchantId,
+          transactionHash: saved.transactionHash!,
+          blockNumber: BigInt(confirmations), // Using confirmations as mock block number
+        });
+
+        // Emit blockchain transaction confirmed event
+        await this.events.emitBlockchainTxConfirmed({
+          paymentIntentId: saved.id,
+          merchantId: (saved as any).merchantId,
+          status: targetStatus,
+          amount: saved.amount,
+          currency: saved.currency,
+          transactionHash: saved.transactionHash!,
+          blockNumber: BigInt(confirmations),
+        });
+
+        // Emit status changed event
+        await this.events.emitStatusChanged({
+          paymentIntentId: saved.id,
+          merchantId: (saved as any).merchantId,
+          fromStatus: currentStatus,
+          toStatus: targetStatus,
+          amount: saved.amount,
+          currency: saved.currency,
+        });
+
+        // Enqueue settlement job if settlement method is OFF_RAMP_MOCK
+        if (saved.settlementMethod === "OFF_RAMP_MOCK") {
+          await this.enqueueSettlementJob(
+            saved.id,
+            (saved as any).merchantId,
+            saved.settlementMethod,
+            saved.settlementDestination,
+            saved.amount,
+            saved.currency,
+          );
+        }
+
+        return this.toEntity(saved);
       }
     }
 
@@ -344,7 +530,7 @@ export class IntentService {
     amount: string,
     currency: string,
   ): Promise<void> {
-    if (settlementMethod !== 'OFF_RAMP_MOCK') {
+    if (settlementMethod !== "OFF_RAMP_MOCK") {
       // For other settlement methods, this would integrate with actual RTP/bank APIs
       return;
     }
@@ -360,8 +546,8 @@ export class IntentService {
     const phases = await this.getPhasesForIntent(intentId);
     const now = Math.floor(Date.now() / 1000);
     const updatedPhases: PaymentIntentPhase[] = [
-      ...phases.filter((p) => p.phase !== 'SETTLEMENT'),
-      { phase: 'SETTLEMENT', status: 'IN_PROGRESS', timestamp: now },
+      ...phases.filter((p) => p.phase !== "SETTLEMENT"),
+      { phase: "SETTLEMENT", status: "IN_PROGRESS", timestamp: now },
     ];
 
     await this.prisma.paymentIntent.update({
@@ -394,7 +580,13 @@ export class IntentService {
     });
 
     // Process settlement in background (don't await - runs asynchronously)
-    this.processSettlement(intentId, settlementMethod, settlementDestination, amount, currency).catch((err) => {
+    this.processSettlement(
+      intentId,
+      settlementMethod,
+      settlementDestination,
+      amount,
+      currency,
+    ).catch((err) => {
       console.error(`Error processing settlement for intent ${intentId}:`, err);
     });
   }
@@ -417,13 +609,13 @@ export class IntentService {
     if (
       intent.status !== PaymentIntentStatus.SUCCEEDED ||
       (intent.settlementStatus as string) !== SettlementStatus.IN_PROGRESS ||
-      intent.settlementMethod !== 'OFF_RAMP_MOCK'
+      intent.settlementMethod !== "OFF_RAMP_MOCK"
     ) {
       return false;
     }
 
     const phases = (intent.phases as PaymentIntentPhase[] | null) ?? [];
-    const settlementPhase = phases.find((p) => p.phase === 'SETTLEMENT');
+    const settlementPhase = phases.find((p) => p.phase === "SETTLEMENT");
 
     // If SETTLEMENT phase doesn't exist, start it
     if (!settlementPhase) {
@@ -438,7 +630,10 @@ export class IntentService {
     }
 
     // If SETTLEMENT phase is already completed, nothing to do
-    if (settlementPhase.status === 'COMPLETED' || settlementPhase.status === 'FAILED') {
+    if (
+      settlementPhase.status === "COMPLETED" ||
+      settlementPhase.status === "FAILED"
+    ) {
       return false;
     }
 
@@ -451,7 +646,12 @@ export class IntentService {
 
     if (elapsedSeconds >= delaySeconds) {
       // Enough time has passed, complete the settlement
-      await this.completeSettlement(intent.id, intent.settlementDestination, intent.amount, intent.currency);
+      await this.completeSettlement(
+        intent.id,
+        intent.settlementDestination,
+        intent.amount,
+        intent.currency,
+      );
       return true; // Database was updated
     }
 
@@ -469,7 +669,7 @@ export class IntentService {
     amount: string,
     currency: string,
   ): Promise<void> {
-    if (settlementMethod !== 'OFF_RAMP_MOCK') {
+    if (settlementMethod !== "OFF_RAMP_MOCK") {
       return;
     }
 
@@ -479,7 +679,12 @@ export class IntentService {
     await new Promise((resolve) => setTimeout(resolve, delayMs));
 
     // Complete the settlement
-    await this.completeSettlement(intentId, settlementDestination, amount, currency);
+    await this.completeSettlement(
+      intentId,
+      settlementDestination,
+      amount,
+      currency,
+    );
   }
 
   /**
@@ -500,7 +705,11 @@ export class IntentService {
     if (!intent) return;
 
     // Execute the mock settlement (in production, this would call actual offramp APIs)
-    const result = await this.settlement.processOffRampMock(settlementDestination, amount, currency);
+    const result = await this.settlement.processOffRampMock(
+      settlementDestination,
+      amount,
+      currency,
+    );
 
     const phases = await this.getPhasesForIntent(intentId);
     const now = Math.floor(Date.now() / 1000);
@@ -508,8 +717,8 @@ export class IntentService {
     if (!result.success) {
       // Update settlement status to FAILED
       const updatedPhases: PaymentIntentPhase[] = [
-        ...phases.filter((p) => p.phase !== 'SETTLEMENT'),
-        { phase: 'SETTLEMENT', status: 'FAILED', timestamp: now },
+        ...phases.filter((p) => p.phase !== "SETTLEMENT"),
+        { phase: "SETTLEMENT", status: "FAILED", timestamp: now },
       ];
 
       await this.prisma.paymentIntent.update({
@@ -533,13 +742,13 @@ export class IntentService {
     const currentStatus = currentIntent.status as PaymentIntentStatus;
     const targetStatus = PaymentIntentStatus.SETTLED;
     this.stateMachine.transition(currentStatus, targetStatus, {
-      reason: 'Settlement completed',
+      reason: "Settlement completed",
     });
 
     // Settlement successful - update status to COMPLETED
     const updatedPhases: PaymentIntentPhase[] = [
-      ...phases.filter((p) => p.phase !== 'SETTLEMENT'),
-      { phase: 'SETTLEMENT', status: 'COMPLETED', timestamp: now },
+      ...phases.filter((p) => p.phase !== "SETTLEMENT"),
+      { phase: "SETTLEMENT", status: "COMPLETED", timestamp: now },
     ];
 
     const updated = await this.prisma.paymentIntent.update({
@@ -559,7 +768,7 @@ export class IntentService {
       currency,
       settlementMethod: intent.settlementMethod,
       settlementDestination,
-      settlementTxId: result.transactionId || 'mock_settlement',
+      settlementTxId: result.transactionId || "mock_settlement",
     });
 
     // Emit status changed event
@@ -570,7 +779,7 @@ export class IntentService {
       toStatus: targetStatus,
       amount,
       currency,
-      reason: 'Settlement completed',
+      reason: "Settlement completed",
     });
 
     // Emit settlement completed event
@@ -582,15 +791,93 @@ export class IntentService {
       currency,
       settlementMethod: intent.settlementMethod,
       settlementDestination,
-      settlementTxId: result.transactionId || 'mock_settlement',
+      settlementTxId: result.transactionId || "mock_settlement",
       settlementStatus: SettlementStatus.COMPLETED,
     });
   }
 
   /**
+   * Enqueue a settlement job to BullMQ.
+   * Sets up the settlement phase, logs audit events, and enqueues the job with delay.
+   */
+  private async enqueueSettlementJob(
+    intentId: string,
+    merchantId: string,
+    settlementMethod: string,
+    settlementDestination: string,
+    amount: string,
+    currency: string,
+  ): Promise<void> {
+    if (settlementMethod !== "OFF_RAMP_MOCK") {
+      // For other settlement methods, this would integrate with actual RTP/bank APIs
+      return;
+    }
+
+    // Get payment intent to verify it exists
+    const intent = await this.prisma.paymentIntent.findUnique({
+      where: { id: intentId },
+    });
+
+    if (!intent) return;
+
+    // Add SETTLEMENT phase with IN_PROGRESS status
+    const phases = await this.getPhasesForIntent(intentId);
+    const now = Math.floor(Date.now() / 1000);
+    const updatedPhases: PaymentIntentPhase[] = [
+      ...phases.filter((p) => p.phase !== "SETTLEMENT"),
+      { phase: "SETTLEMENT", status: "IN_PROGRESS", timestamp: now },
+    ];
+
+    await this.prisma.paymentIntent.update({
+      where: { id: intentId },
+      data: {
+        phases: updatedPhases,
+      },
+    });
+
+    // Log settlement initiation
+    await this.audit.logSettlementInitiated({
+      paymentIntentId: intentId,
+      merchantId,
+      amount,
+      currency,
+      settlementMethod,
+      settlementDestination,
+    });
+
+    // Emit settlement initiated event
+    await this.events.emitSettlementInitiated({
+      paymentIntentId: intentId,
+      merchantId,
+      status: PaymentIntentStatus.SUCCEEDED,
+      amount,
+      currency,
+      settlementMethod,
+      settlementDestination,
+      settlementStatus: SettlementStatus.IN_PROGRESS,
+    });
+
+    // Enqueue settlement job with delay
+    const delayMs = this.settlement.getMockDelayMs();
+    await this.settlementQueue.enqueueSettlement(
+      {
+        paymentIntentId: intentId,
+        merchantId,
+        settlementMethod,
+        settlementDestination,
+        amount,
+        currency,
+      },
+      delayMs,
+    );
+  }
+
+  /**
    * Helper to get phases for an intent.
    */
-  private async getPhasesForIntent(intentId: string): Promise<PaymentIntentPhase[]> {
+  private async getPhasesForIntent(
+    intentId: string,
+  ): Promise<PaymentIntentPhase[]> {
     const intent = await this.prisma.paymentIntent.findUnique({
       where: { id: intentId },
       select: { phases: true },
@@ -621,9 +908,12 @@ export class IntentService {
     createdAt: Date;
     updatedAt: Date;
   }): PaymentIntentEntity {
+    // Generate payment URL for wallet connection
+    const paymentUrl = this.generatePaymentUrl(row.id);
+
     return {
       id: row.id,
-      object: 'payment_intent',
+      object: "payment_intent",
       status: row.status as PaymentIntentStatus,
       amount: row.amount,
       currency: row.currency,
@@ -640,20 +930,63 @@ export class IntentService {
       signerAddress: row.signerAddress,
       phases: (row.phases as PaymentIntentPhase[] | null) ?? null,
       metadata: asObjectRecord(row.metadata),
+      paymentUrl,
       created: toUnixSeconds(row.createdAt),
       updated: toUnixSeconds(row.updatedAt),
     };
   }
 
-  private getContractAddressForType(type: string): string {
-    const zero = '0x0000000000000000000000000000000000000000';
-    if (type === 'DELIVERY_VS_PAYMENT') {
-      const v = process.env.DvP_CONTRACT_ADDRESS;
-      return v && isAddress(v) ? v : zero;
+  /**
+   * Generate payment URL for wallet connection interface.
+   * This URL points to a frontend page where users can connect their wallet and execute the payment.
+   */
+  private generatePaymentUrl(intentId: string): string | null {
+    const frontendUrl =
+      process.env.FRONTEND_URL || process.env.PAYMENT_FRONTEND_URL;
+    if (!frontendUrl) {
+      // If no frontend URL is configured, return null
+      // Merchant can still use the API directly or configure their own frontend
+      return null;
     }
-    const v = process.env.CONSENTED_PULL_CONTRACT_ADDRESS;
-    return v && isAddress(v) ? v : zero;
+    // Generate URL like: http://localhost:5173/?intent=intent_xxx
+    const baseUrl = frontendUrl.endsWith("/")
+      ? frontendUrl.slice(0, -1)
+      : frontendUrl;
+    return `${baseUrl}/?intent=${intentId}`;
+  }
+
+  /**
+   * Get contract address for payment type, using merchant's contract addresses with fallback to env vars.
+   */
+  private getContractAddressForType(
+    type: string,
+    merchant: {
+      dvpContractAddress: string | null;
+      consentedPullContractAddress: string | null;
+    },
+  ): string {
+    const zero = "0x0000000000000000000000000000000000000000";
+
+    if (type === "DELIVERY_VS_PAYMENT") {
+      // Prefer merchant's contract address, fallback to env var, then zero address
+      if (
+        merchant.dvpContractAddress &&
+        isAddress(merchant.dvpContractAddress)
+      ) {
+        return merchant.dvpContractAddress;
+      }
+      const envAddress = process.env.DvP_CONTRACT_ADDRESS;
+      return envAddress && isAddress(envAddress) ? envAddress : zero;
+    }
+
+    // CONSENTED_PULL type
+    if (
+      merchant.consentedPullContractAddress &&
+      isAddress(merchant.consentedPullContractAddress)
+    ) {
+      return merchant.consentedPullContractAddress;
+    }
+    const envAddress = process.env.CONSENTED_PULL_CONTRACT_ADDRESS;
+    return envAddress && isAddress(envAddress) ? envAddress : zero;
   }
 }
-
-

@@ -1,5 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { OnEvent } from '@nestjs/event-emitter';
+import { Injectable, Logger } from "@nestjs/common";
+import { OnEvent } from "@nestjs/event-emitter";
 import {
   PaymentIntentEventType,
   PaymentIntentEvent,
@@ -9,8 +9,8 @@ import {
   SettlementInitiatedEvent,
   SettlementCompletedEvent,
   StatusChangedEvent,
-} from '../events/payment-intent.events';
-import { AuditService } from '../services/audit.service';
+} from "../events/payment-intent.events";
+import { AuditService } from "../services/audit.service";
 
 /**
  * Event listener for payment intent events.
@@ -30,13 +30,17 @@ export class PaymentIntentEventListener {
 
   @OnEvent(PaymentIntentEventType.BLOCKCHAIN_TX_SUBMITTED)
   async handleBlockchainTxSubmitted(event: BlockchainTxSubmittedEvent) {
-    this.logger.log(`Blockchain transaction submitted: ${event.transactionHash} for intent ${event.paymentIntentId}`);
+    this.logger.log(
+      `Blockchain transaction submitted: ${event.transactionHash} for intent ${event.paymentIntentId}`,
+    );
     // Additional side effects can be added here
   }
 
   @OnEvent(PaymentIntentEventType.BLOCKCHAIN_TX_CONFIRMED)
   async handleBlockchainTxConfirmed(event: BlockchainTxConfirmedEvent) {
-    this.logger.log(`Blockchain transaction confirmed: ${event.transactionHash} for intent ${event.paymentIntentId}`);
+    this.logger.log(
+      `Blockchain transaction confirmed: ${event.transactionHash} for intent ${event.paymentIntentId}`,
+    );
     // Additional side effects can be added here (e.g., trigger settlement)
   }
 
@@ -48,7 +52,9 @@ export class PaymentIntentEventListener {
 
   @OnEvent(PaymentIntentEventType.SETTLEMENT_COMPLETED)
   async handleSettlementCompleted(event: SettlementCompletedEvent) {
-    this.logger.log(`Settlement completed for intent ${event.paymentIntentId} with tx ${event.settlementTxId}`);
+    this.logger.log(
+      `Settlement completed for intent ${event.paymentIntentId} with tx ${event.settlementTxId}`,
+    );
     // Additional side effects can be added here (e.g., webhooks, notifications)
   }
 
@@ -66,4 +72,3 @@ export class PaymentIntentEventListener {
     // Additional side effects can be added here
   }
 }
-

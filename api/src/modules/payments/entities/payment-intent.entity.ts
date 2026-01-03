@@ -1,29 +1,29 @@
 export enum PaymentIntentStatus {
-  INITIATED = 'INITIATED',
-  REQUIRES_SIGNATURE = 'REQUIRES_SIGNATURE',
-  PROCESSING = 'PROCESSING',
-  SUCCEEDED = 'SUCCEEDED',
-  SETTLED = 'SETTLED',
-  FINAL = 'FINAL',
-  CANCELED = 'CANCELED',
-  REQUIRES_ACTION = 'REQUIRES_ACTION',
+  INITIATED = "INITIATED",
+  REQUIRES_SIGNATURE = "REQUIRES_SIGNATURE",
+  PROCESSING = "PROCESSING",
+  SUCCEEDED = "SUCCEEDED",
+  SETTLED = "SETTLED",
+  FINAL = "FINAL",
+  CANCELED = "CANCELED",
+  REQUIRES_ACTION = "REQUIRES_ACTION",
 }
 
 export enum SettlementStatus {
-  PENDING = 'PENDING',
-  IN_PROGRESS = 'IN_PROGRESS',
-  COMPLETED = 'COMPLETED',
-  FAILED = 'FAILED',
+  PENDING = "PENDING",
+  IN_PROGRESS = "IN_PROGRESS",
+  COMPLETED = "COMPLETED",
+  FAILED = "FAILED",
 }
 
 export type IntentPhaseName =
-  | 'SIGNATURE_VERIFICATION'
-  | 'ESCROW_LOCKED'
-  | 'AWAITING_DELIVERY_PROOF'
-  | 'BLOCKCHAIN_CONFIRMATION'
-  | 'SETTLEMENT';
+  | "SIGNATURE_VERIFICATION"
+  | "ESCROW_LOCKED"
+  | "AWAITING_DELIVERY_PROOF"
+  | "BLOCKCHAIN_CONFIRMATION"
+  | "SETTLEMENT";
 
-export type IntentPhaseStatus = 'IN_PROGRESS' | 'COMPLETED' | 'FAILED';
+export type IntentPhaseStatus = "IN_PROGRESS" | "COMPLETED" | "FAILED";
 
 export type PaymentIntentPhase = {
   phase: IntentPhaseName;
@@ -33,7 +33,7 @@ export type PaymentIntentPhase = {
 
 export type PaymentIntentEntity = {
   id: string;
-  object: 'payment_intent';
+  object: "payment_intent";
   status: PaymentIntentStatus;
 
   amount: string;
@@ -60,8 +60,9 @@ export type PaymentIntentEntity = {
   phases?: PaymentIntentPhase[] | null;
   metadata?: Record<string, unknown> | null;
 
+  // Wallet connection URL for user to execute payment
+  paymentUrl?: string | null;
+
   created: number;
   updated: number;
 };
-
-

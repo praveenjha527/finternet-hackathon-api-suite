@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable } from "@nestjs/common";
 
 @Injectable()
 export class ComplianceService {
@@ -10,5 +10,3 @@ export class ComplianceService {
     return;
   }
 }
-
-

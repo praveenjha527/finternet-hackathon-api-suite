@@ -1,7 +1,7 @@
-import { Module } from '@nestjs/common';
-import { PrismaModule } from '../../prisma/prisma.module';
-import { MerchantService } from './merchant.service';
-import { ApiKeyGuard } from './guards/api-key.guard';
+import { Module } from "@nestjs/common";
+import { PrismaModule } from "../../prisma/prisma.module";
+import { MerchantService } from "./merchant.service";
+import { ApiKeyGuard } from "./guards/api-key.guard";
 
 @Module({
   imports: [PrismaModule],
@@ -9,4 +9,3 @@ import { ApiKeyGuard } from './guards/api-key.guard';
   exports: [MerchantService, ApiKeyGuard],
 })
 export class AuthModule {}
-
