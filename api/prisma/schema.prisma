@@ -21,6 +21,7 @@ model Merchant {
   updatedAt DateTime @updatedAt
 
   paymentIntents PaymentIntent[]
+  fiatAccount    MerchantFiatAccount?
 }
 
 model PaymentIntent {
@@ -118,6 +119,57 @@ model AuditLog {
   @@index([category])
   @@index([blockchainTxHash])
   @@index([settlementTxId])
+  @@index([createdAt])
+}
+
+// Simulated Fiat Account for Merchants
+model MerchantFiatAccount {
+  id                String   @id @default(uuid())
+  merchantId        String   @unique
+  currency          String   @default("USD") // USD, EUR, GBP, etc.
+  availableBalance  String   @default("0") // Decimal as string for precision
+  pendingBalance    String   @default("0") // Funds pending settlement
+  reservedBalance   String   @default("0") // Funds reserved for in-flight transactions
+  accountNumber     String   @unique // Simulated bank account number
+  routingNumber     String?  // For US accounts
+  bankName          String?  // Simulated bank name
+  accountHolderName String?  // Account holder name
+  country           String   @default("US") // ISO country code
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  merchant          Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  ledgerEntries     LedgerEntry[]
+
+  @@index([merchantId])
+  @@index([currency])
+}
+
+// Ledger entries for fiat account transactions
+model LedgerEntry {
+  id                    String   @id @default(uuid())
+  fiatAccountId         String
+  paymentIntentId       String?
+  transactionType       String // "CREDIT", "DEBIT", "SETTLEMENT", "RESERVE", "RELEASE"
+  amount                String // Decimal as string
+  currency              String   @default("USD")
+  balanceBefore         String // Balance before this transaction
+  balanceAfter          String // Balance after this transaction
+  description           String?
+  settlementMethod      String? // "wire_transfer", "ach", "sepa", etc.
+  settlementDestination String? // Bank account, wallet address, etc.
+  settlementTxId        String? // Mock settlement transaction ID
+  status                String   @default("COMPLETED") // "COMPLETED", "PENDING", "FAILED"
+  metadata              Json? // Additional transaction details
+  createdAt             DateTime @default(now())
+
+  fiatAccount           MerchantFiatAccount @relation(fields: [fiatAccountId], references: [id], onDelete: Cascade)
+
+  @@index([fiatAccountId])
+  @@index([paymentIntentId])
+  @@index([transactionType])
+  @@index([status])
   @@index([createdAt])
 }
 

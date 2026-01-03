@@ -9,6 +9,8 @@ import { SettlementService } from "../services/settlement.service";
 import { AuditService } from "../services/audit.service";
 import { PaymentEventService } from "../services/payment-event.service";
 import { PaymentStateMachineService } from "../services/payment-state-machine.service";
+import { FiatAccountService } from "../services/fiat-account.service";
+import { LedgerService } from "../services/ledger.service";
 
 @Module({
   imports: [
@@ -54,6 +56,8 @@ import { PaymentStateMachineService } from "../services/payment-state-machine.se
     AuditService,
     PaymentEventService,
     PaymentStateMachineService,
+    FiatAccountService,
+    LedgerService,
   ],
   exports: [SettlementQueueService],
 })

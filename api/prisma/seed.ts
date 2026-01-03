@@ -117,12 +117,56 @@ async function main() {
     console.log(`✓ Created merchant "${created.name}" with API key: ${created.apiKey}`);
   }
 
-  console.log('✅ Seeding complete!');
-  console.log('\n📋 Merchant API Keys:');
-  const merchants = await prisma.merchant.findMany({
+  // Create fiat accounts for all merchants
+  console.log('\n📊 Creating fiat accounts for merchants...\n');
+
+  const existingMerchants = await prisma.merchant.findMany({
     orderBy: { createdAt: 'asc' },
   });
-  merchants.forEach((m) => {
+
+  for (const merchant of existingMerchants) {
+    const existingAccount = await (prisma as any).merchantFiatAccount.findUnique({
+      where: { merchantId: merchant.id },
+    });
+
+    if (!existingAccount) {
+      // Generate simulated account details
+      const accountNumber = Array.from({ length: 10 }, () =>
+        Math.floor(Math.random() * 10),
+      ).join('');
+      const routingNumber = Array.from({ length: 9 }, () =>
+        Math.floor(Math.random() * 10),
+      ).join('');
+
+      // Give hackathon merchants some initial balance for testing
+      const initialBalance =
+        merchant.apiKey.startsWith('sk_hackathon_') ? '10000.00' : '0.00';
+
+      await (prisma as any).merchantFiatAccount.create({
+        data: {
+          merchantId: merchant.id,
+          currency: 'USD',
+          availableBalance: initialBalance,
+          pendingBalance: '0.00',
+          reservedBalance: '0.00',
+          accountNumber,
+          routingNumber,
+          bankName: 'Simulated Bank',
+          accountHolderName: merchant.name,
+          country: 'US',
+          isActive: true,
+        },
+      });
+
+      console.log(
+        `  ✓ Created fiat account for ${merchant.name} (Balance: $${initialBalance})`,
+      );
+    }
+  }
+
+  console.log('\n✅ Seeding complete!');
+  console.log('\n📋 Merchant API Keys:');
+  existingMerchants.forEach((m) => {
     console.log(`  - ${m.name}: ${m.apiKey}`);
   });
 }

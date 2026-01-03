@@ -53,12 +53,17 @@ export class SettlementQueueProcessor extends WorkerHost {
       throw new Error(`Payment intent not found: ${paymentIntentId}`);
     }
 
-    // Execute the settlement
-    const result = await this.settlement.processOffRampMock(
-      settlementDestination,
-      amount,
-      currency,
-    );
+          // Execute the settlement (with merchant ID for ledger)
+          const result = await this.settlement.processOffRampMock(
+            merchantId,
+            settlementDestination,
+            amount,
+            currency,
+            {
+              paymentIntentId,
+              settlementMethod,
+            },
+          );
 
     const phases = (intent.phases as PaymentIntentPhase[] | null) ?? [];
     const now = Math.floor(Date.now() / 1000);

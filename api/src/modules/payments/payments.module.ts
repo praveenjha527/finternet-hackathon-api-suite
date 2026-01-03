@@ -8,6 +8,10 @@ import { RoutingService } from "./services/routing.service";
 import { SettlementService } from "./services/settlement.service";
 import { ComplianceService } from "./services/compliance.service";
 import { AuditService } from "./services/audit.service";
+import { FiatAccountService } from "./services/fiat-account.service";
+import { LedgerService } from "./services/ledger.service";
+import { RefundService } from "./services/refund.service";
+import { ChargebackService } from "./services/chargeback.service";
 import { PaymentStateMachineService } from "./services/payment-state-machine.service";
 import { PaymentEventService } from "./services/payment-event.service";
 import { PaymentIntentEventListener } from "./listeners/payment-intent-event.listener";
@@ -27,6 +31,10 @@ import { QueuesModule } from "./queues/queues.module";
     PaymentStateMachineService,
     PaymentEventService,
     PaymentIntentEventListener,
+    FiatAccountService,
+    LedgerService,
+    RefundService,
+    ChargebackService,
   ],
 })
 export class PaymentsModule {}

@@ -20,6 +20,7 @@ import { AuditService } from "./audit.service";
 import { PaymentStateMachineService } from "./payment-state-machine.service";
 import { PaymentEventService } from "./payment-event.service";
 import { SettlementQueueService } from "../queues/settlement-queue.service";
+import { LedgerService } from "./ledger.service";
 
 const SEPOLIA_CHAIN_ID = 11155111;
 const DEFAULT_DECIMALS = 6; // USDC
@@ -45,6 +46,7 @@ export class IntentService {
     private readonly stateMachine: PaymentStateMachineService,
     private readonly events: PaymentEventService,
     private readonly settlementQueue: SettlementQueueService,
+    private readonly ledger: LedgerService,
   ) {}
 
   async createIntent(
@@ -389,6 +391,23 @@ export class IntentService {
           transactionHash: saved.transactionHash!,
         });
 
+        // Credit merchant account (payment succeeded - gateway now owes merchant)
+        try {
+          await this.ledger.credit((saved as any).merchantId, saved.amount, {
+            paymentIntentId: saved.id,
+            description: `Payment received: ${saved.id}`,
+            metadata: {
+              transactionHash: saved.transactionHash,
+              currency: saved.currency,
+              type: saved.type,
+            },
+          });
+        } catch (error) {
+          // Log error but don't fail the payment confirmation
+          // In production, you might want to retry or alert
+          console.error(`Failed to credit merchant account for payment ${saved.id}:`, error);
+        }
+
         // Enqueue settlement job if settlement method is OFF_RAMP_MOCK
         if (saved.settlementMethod === "OFF_RAMP_MOCK") {
           await this.enqueueSettlementJob(
@@ -478,6 +497,23 @@ export class IntentService {
           transactionHash: saved.transactionHash!,
           blockNumber: BigInt(confirmations), // Using confirmations as mock block number
         });
+
+        // Credit merchant account (payment succeeded - gateway now owes merchant)
+        try {
+          await this.ledger.credit((saved as any).merchantId, saved.amount, {
+            paymentIntentId: saved.id,
+            description: `Payment received: ${saved.id}`,
+            metadata: {
+              transactionHash: saved.transactionHash,
+              currency: saved.currency,
+              type: saved.type,
+            },
+          });
+        } catch (error) {
+          // Log error but don't fail the payment confirmation
+          // In production, you might want to retry or alert
+          console.error(`Failed to credit merchant account for payment ${saved.id}:`, error);
+        }
 
         // Emit blockchain transaction confirmed event
         await this.events.emitBlockchainTxConfirmed({
@@ -637,30 +673,13 @@ export class IntentService {
       return false;
     }
 
-    // Check if enough time has passed since settlement started
-    const delayMs = this.settlement.getMockDelayMs();
-    const settlementStartTime = settlementPhase.timestamp ?? 0;
-    const now = Math.floor(Date.now() / 1000);
-    const elapsedSeconds = now - settlementStartTime;
-    const delaySeconds = Math.floor(delayMs / 1000);
-
-    if (elapsedSeconds >= delaySeconds) {
-      // Enough time has passed, complete the settlement
-      await this.completeSettlement(
-        intent.id,
-        intent.settlementDestination,
-        intent.amount,
-        intent.currency,
-      );
-      return true; // Database was updated
-    }
-
-    return false; // Settlement still in progress, no update
+    // This method is deprecated - settlement is now handled via BullMQ queue
+    // Keeping for backwards compatibility, but it should not be called
+    return false;
   }
 
   /**
-   * Process settlement for a payment intent.
-   * Waits for the configured delay, then executes settlement and updates database.
+   * @deprecated Settlement is now handled via BullMQ queue. Use enqueueSettlementJob instead.
    */
   private async processSettlement(
     intentId: string,
@@ -669,22 +688,8 @@ export class IntentService {
     amount: string,
     currency: string,
   ): Promise<void> {
-    if (settlementMethod !== "OFF_RAMP_MOCK") {
-      return;
-    }
-
-    const delayMs = this.settlement.getMockDelayMs();
-
-    // Wait for the configured delay to simulate settlement processing
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
-
-    // Complete the settlement
-    await this.completeSettlement(
-      intentId,
-      settlementDestination,
-      amount,
-      currency,
-    );
+    // Deprecated - settlement is now handled via BullMQ queue
+    return;
   }
 
   /**
@@ -857,19 +862,15 @@ export class IntentService {
       settlementStatus: SettlementStatus.IN_PROGRESS,
     });
 
-    // Enqueue settlement job with delay
-    const delayMs = this.settlement.getMockDelayMs();
-    await this.settlementQueue.enqueueSettlement(
-      {
-        paymentIntentId: intentId,
-        merchantId,
-        settlementMethod,
-        settlementDestination,
-        amount,
-        currency,
-      },
-      delayMs,
-    );
+    // Enqueue settlement job (delay is handled by settlement service internally)
+    await this.settlementQueue.enqueueSettlement({
+      paymentIntentId: intentId,
+      merchantId,
+      settlementMethod,
+      settlementDestination,
+      amount,
+      currency,
+    });
   }
 
   /**
