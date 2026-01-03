@@ -5,6 +5,8 @@ import { EventEmitterModule } from "@nestjs/event-emitter";
 import { PrismaModule } from "../../../prisma/prisma.module";
 import { SettlementQueueProcessor } from "./settlement.queue";
 import { SettlementQueueService } from "./settlement-queue.service";
+import { ProgrammablePaymentQueueProcessor } from "./programmable-payment.queue";
+import { ProgrammablePaymentQueueService } from "./programmable-payment-queue.service";
 import { SettlementService } from "../services/settlement.service";
 import { AuditService } from "../services/audit.service";
 import { PaymentEventService } from "../services/payment-event.service";
@@ -48,10 +50,42 @@ import { LedgerService } from "../services/ledger.service";
       },
       inject: [ConfigService],
     }),
+    BullModule.registerQueueAsync({
+      name: "programmable-payment",
+      imports: [ConfigModule],
+      useFactory: (configService: ConfigService) => {
+        const redisUrl = configService.get<string>("REDIS_URL");
+        const redisHost = configService.get<string>("REDIS_HOST", "localhost");
+        const redisPort = configService.get<number>("REDIS_PORT", 6379);
+
+        const connection = redisUrl
+          ? { url: redisUrl }
+          : {
+              host: redisHost,
+              port: redisPort,
+            };
+
+        return {
+          connection,
+          defaultJobOptions: {
+            removeOnComplete: {
+              age: 86400, // Keep completed jobs for 24 hours
+              count: 1000,
+            },
+            removeOnFail: {
+              age: 604800, // Keep failed jobs for 7 days
+            },
+          },
+        };
+      },
+      inject: [ConfigService],
+    }),
   ],
   providers: [
     SettlementQueueProcessor,
     SettlementQueueService,
+    ProgrammablePaymentQueueProcessor,
+    ProgrammablePaymentQueueService,
     SettlementService,
     AuditService,
     PaymentEventService,
@@ -59,6 +93,6 @@ import { LedgerService } from "../services/ledger.service";
     FiatAccountService,
     LedgerService,
   ],
-  exports: [SettlementQueueService],
+  exports: [SettlementQueueService, ProgrammablePaymentQueueService],
 })
 export class QueuesModule {}

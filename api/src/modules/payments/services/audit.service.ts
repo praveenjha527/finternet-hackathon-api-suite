@@ -6,7 +6,7 @@ type AuditLogData = {
   paymentIntentId: string;
   merchantId: string;
   eventType: string;
-  category: "ON_CHAIN" | "OFF_RAMP" | "LIFECYCLE" | "AUTHORIZATION";
+  category: "ON_CHAIN" | "OFF_RAMP" | "LIFECYCLE" | "AUTHORIZATION" | "PROGRAMMABLE_PAYMENT" | "DISPUTE";
   amount?: string;
   currency?: string;
   blockchainTxHash?: string;

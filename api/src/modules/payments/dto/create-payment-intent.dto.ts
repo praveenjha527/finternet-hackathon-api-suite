@@ -4,13 +4,7 @@ import {
   IsObject,
   IsOptional,
   IsString,
-  ValidateNested,
 } from "class-validator";
-import { Type } from "class-transformer";
-
-class MetadataDto {
-  [key: string]: unknown;
-}
 
 export class CreatePaymentIntentDto {
   @ApiProperty({ example: "1000.00" })
@@ -48,7 +42,36 @@ export class CreatePaymentIntentDto {
   })
   @IsOptional()
   @IsObject()
-  @ValidateNested()
-  @Type(() => MetadataDto)
   metadata?: Record<string, unknown>;
+
+  // Escrow-specific fields (for DELIVERY_VS_PAYMENT type)
+  @ApiPropertyOptional({
+    example: 2592000,
+    description: "Delivery period in seconds (default: 30 days)",
+  })
+  @IsOptional()
+  deliveryPeriod?: number;
+
+  @ApiPropertyOptional({
+    example: "0x0000000000000000000000000000000000000000000000000000000000000000",
+    description: "Expected delivery hash (bytes32) - optional",
+  })
+  @IsOptional()
+  @IsString()
+  expectedDeliveryHash?: string;
+
+  @ApiPropertyOptional({
+    example: true,
+    description: "Auto-release funds when delivery proof is submitted",
+  })
+  @IsOptional()
+  autoRelease?: boolean;
+
+  @ApiPropertyOptional({
+    example: "0x0000000000000000000000000000000000000000",
+    description: "Delivery oracle address (optional, zero address if not used)",
+  })
+  @IsOptional()
+  @IsString()
+  deliveryOracle?: string;
 }

@@ -11,21 +11,14 @@ import { ApiException } from "../../../common/exceptions";
 import {
   ConsentedPullAbi,
   DVPEscrowWithSettlementAbi,
+  DvpEscrowContract,
+  DvpContract,
 } from "../../../contracts/types";
 
 type TxSubmitResult = {
   transactionHash: string;
   chainId: number;
   contractAddress: string;
-};
-
-type DvpContract = Contract & {
-  initiateDvP: (
-    intentId: string,
-    payer: string,
-    payee: string,
-    amount: bigint,
-  ) => Promise<{ hash: string }>;
 };
 
 type ConsentedPullContract = Contract & {
@@ -69,10 +62,74 @@ export class BlockchainService {
   }
 
   /**
-   * Submit a DvP transaction.
+   * Create an order in the escrow contract (new escrow-based flow).
+   * 
+   * This replaces the old initiateDvP() method and uses the new order-based model.
+   */
+  async createOrder(params: {
+    merchantId: bigint;
+    orderId: bigint;
+    buyer: string;
+    token: string;
+    amount: string;
+    decimals: number;
+    deliveryPeriod: number; // in seconds
+    expectedDeliveryHash: string; // bytes32 hex string
+    autoRelease: boolean;
+    deliveryOracle: string; // address or zero address
+    contractAddress: string;
+  }): Promise<TxSubmitResult> {
+    const { contractAddress } = params;
+    if (
+      !contractAddress ||
+      contractAddress === "0x0000000000000000000000000000000000000000"
+    ) {
+      return this.mockTx("0x0000000000000000000000000000000000000000");
+    }
+
+    if (this.isMockMode()) {
+      return this.mockTx(contractAddress);
+    }
+
+    try {
+      const contract = new Contract(
+        contractAddress,
+        DVPEscrowWithSettlementAbi,
+        this.signer,
+      ) as unknown as DvpEscrowContract;
+      
+      const tx = await contract.createOrder(
+        params.merchantId,
+        params.orderId,
+        params.buyer,
+        params.token,
+        parseUnits(params.amount, params.decimals),
+        params.deliveryPeriod,
+        params.expectedDeliveryHash,
+        params.autoRelease,
+        params.deliveryOracle,
+      );
+      
+      return {
+        transactionHash: tx.hash,
+        chainId: this.chainId,
+        contractAddress,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      throw new ApiException(
+        "contract_execution_failed",
+        `Failed to create order: ${message}`,
+        500,
+      );
+    }
+  }
+
+  /**
+   * Submit a DvP transaction (DEPRECATED - use createOrder instead).
    *
-   * Hackathon note: `payee` isn't currently part of the create intent API,
-   * so we default it to FINTERNET_SIGNER (if set) or the backend wallet.
+   * @deprecated This method is kept for backward compatibility but should not be used for new implementations.
+   * Use createOrder() instead for the new escrow-based flow.
    */
   async submitDvP(params: {
     intentId: string;

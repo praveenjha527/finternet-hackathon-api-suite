@@ -4,6 +4,10 @@ import { PaymentsService } from "./payments.service";
 import type { ApiResponse } from "../../common/responses";
 import { CreatePaymentIntentDto } from "./dto/create-payment-intent.dto";
 import { ConfirmPaymentIntentDto } from "./dto/confirm-payment-intent.dto";
+import { SubmitDeliveryProofDto } from "./dto/submit-delivery-proof.dto";
+import { RaiseDisputeDto } from "./dto/raise-dispute.dto";
+import { CreateMilestoneDto } from "./dto/create-milestone.dto";
+import { CompleteMilestoneDto } from "./dto/complete-milestone.dto";
 import type { PaymentIntentEntity } from "./entities/payment-intent.entity";
 import { CurrentMerchant } from "../auth/decorators/current-merchant.decorator";
 import { Public } from "../auth/guards/api-key.guard";
@@ -99,6 +103,112 @@ export class PaymentsController {
       data: intent,
       created: intent.created,
       updated: intent.updated,
+    };
+  }
+
+  /**
+   * Get escrow order for a payment intent
+   */
+  @ApiParam({ name: "intentId" })
+  @Get(":intentId/escrow")
+  async getEscrowOrder(
+    @Param("intentId") intentId: string,
+    @CurrentMerchant() merchant: Merchant,
+  ) {
+    const escrowOrder = await this.paymentsService.getEscrowOrder(intentId, merchant.id);
+    return {
+      id: escrowOrder.id,
+      object: "escrow_order",
+      data: escrowOrder,
+    };
+  }
+
+  /**
+   * Submit delivery proof for an escrow order
+   */
+  @ApiParam({ name: "intentId" })
+  @Post(":intentId/escrow/delivery-proof")
+  @HttpCode(200)
+  async submitDeliveryProof(
+    @Param("intentId") intentId: string,
+    @Body() dto: SubmitDeliveryProofDto,
+    @CurrentMerchant() merchant: Merchant,
+  ) {
+    const result = await this.paymentsService.submitDeliveryProof(
+      intentId,
+      dto,
+      merchant.id,
+    );
+    return {
+      id: result.id,
+      object: "delivery_proof",
+      data: result,
+    };
+  }
+
+  /**
+   * Raise a dispute for an escrow order
+   */
+  @ApiParam({ name: "intentId" })
+  @Post(":intentId/escrow/dispute")
+  @HttpCode(200)
+  async raiseDispute(
+    @Param("intentId") intentId: string,
+    @Body() dto: RaiseDisputeDto,
+    @CurrentMerchant() merchant: Merchant,
+  ) {
+    await this.paymentsService.raiseDispute(intentId, dto, merchant.id);
+    return {
+      object: "dispute",
+      status: "raised",
+    };
+  }
+
+  /**
+   * Create a milestone for a milestone-based escrow order
+   */
+  @ApiParam({ name: "intentId" })
+  @Post(":intentId/escrow/milestones")
+  @HttpCode(201)
+  async createMilestone(
+    @Param("intentId") intentId: string,
+    @Body() dto: CreateMilestoneDto,
+    @CurrentMerchant() merchant: Merchant,
+  ) {
+    const result = await this.paymentsService.createMilestone(
+      intentId,
+      dto,
+      merchant.id,
+    );
+    return {
+      id: result.id,
+      object: "milestone",
+      data: result,
+    };
+  }
+
+  /**
+   * Complete a milestone for a milestone-based escrow order
+   */
+  @ApiParam({ name: "intentId" })
+  @ApiParam({ name: "milestoneId" })
+  @Post(":intentId/escrow/milestones/:milestoneId/complete")
+  @HttpCode(200)
+  async completeMilestone(
+    @Param("intentId") intentId: string,
+    @Param("milestoneId") milestoneId: string,
+    @Body() dto: CompleteMilestoneDto,
+    @CurrentMerchant() merchant: Merchant,
+  ) {
+    await this.paymentsService.completeMilestone(
+      intentId,
+      milestoneId,
+      dto,
+      merchant.id,
+    );
+    return {
+      object: "milestone",
+      status: "completed",
     };
   }
 }

@@ -12,6 +12,8 @@ import { FiatAccountService } from "./services/fiat-account.service";
 import { LedgerService } from "./services/ledger.service";
 import { RefundService } from "./services/refund.service";
 import { ChargebackService } from "./services/chargeback.service";
+import { EscrowService } from "./services/escrow.service";
+import { EscrowOrderService } from "./services/escrow-order.service";
 import { PaymentStateMachineService } from "./services/payment-state-machine.service";
 import { PaymentEventService } from "./services/payment-event.service";
 import { PaymentIntentEventListener } from "./listeners/payment-intent-event.listener";
@@ -35,6 +37,8 @@ import { QueuesModule } from "./queues/queues.module";
     LedgerService,
     RefundService,
     ChargebackService,
+    EscrowService,
+    EscrowOrderService,
   ],
 })
 export class PaymentsModule {}

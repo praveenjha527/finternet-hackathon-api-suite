@@ -21,6 +21,8 @@ import { PaymentStateMachineService } from "./payment-state-machine.service";
 import { PaymentEventService } from "./payment-event.service";
 import { SettlementQueueService } from "../queues/settlement-queue.service";
 import { LedgerService } from "./ledger.service";
+import { EscrowService } from "./escrow.service";
+import { EscrowOrderService } from "./escrow-order.service";
 
 const SEPOLIA_CHAIN_ID = 11155111;
 const DEFAULT_DECIMALS = 6; // USDC
@@ -47,6 +49,8 @@ export class IntentService {
     private readonly events: PaymentEventService,
     private readonly settlementQueue: SettlementQueueService,
     private readonly ledger: LedgerService,
+    private readonly escrow: EscrowService,
+    private readonly escrowOrder: EscrowOrderService,
   ) {}
 
   async createIntent(
@@ -108,9 +112,31 @@ export class IntentService {
         chainId,
         typedData,
         phases,
-        metadata: dto.metadata
-          ? (dto.metadata as unknown as Prisma.InputJsonValue)
-          : undefined,
+        metadata: (() => {
+          // Build metadata with escrow fields for DELIVERY_VS_PAYMENT type
+          const metadata: Record<string, unknown> = dto.metadata || {};
+          if (dto.type === "DELIVERY_VS_PAYMENT") {
+            // Add escrow-specific fields to metadata
+            if (dto.deliveryPeriod !== undefined) {
+              metadata.deliveryPeriod = dto.deliveryPeriod;
+            }
+            if (dto.expectedDeliveryHash) {
+              metadata.expectedDeliveryHash = dto.expectedDeliveryHash;
+            }
+            if (dto.autoRelease !== undefined) {
+              metadata.autoRelease = dto.autoRelease;
+            }
+            if (dto.deliveryOracle) {
+              metadata.deliveryOracle = dto.deliveryOracle;
+            }
+            // Add token address (USDC on Sepolia by default)
+            metadata.tokenAddress =
+              process.env.TOKEN_ADDRESS || "0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8";
+          }
+          return Object.keys(metadata).length > 0
+            ? (metadata as unknown as Prisma.InputJsonValue)
+            : undefined;
+        })(),
       } as any, // Type assertion - will be valid after Prisma Client regeneration with merchantId field
     });
 
@@ -236,69 +262,39 @@ export class IntentService {
       { phase: "BLOCKCHAIN_CONFIRMATION", status: "IN_PROGRESS" },
     ];
 
-    const decimals = DEFAULT_DECIMALS;
-
-    // Get merchant to retrieve contract addresses
-    const merchantRecord = (await this.prisma.merchant.findUnique({
-      where: { id: merchantId },
-    })) as {
-      dvpContractAddress: string | null;
-      consentedPullContractAddress: string | null;
-    } | null;
-
-    if (!merchantRecord) {
-      throw new ApiException(
-        "resource_missing",
-        `Merchant not found: ${merchantId}`,
-        404,
-      );
-    }
-
-    const contractAddress = this.getContractAddressForType(existing.type, {
-      dvpContractAddress: merchantRecord.dvpContractAddress,
-      consentedPullContractAddress: merchantRecord.consentedPullContractAddress,
-    });
-
-    const submit =
-      existing.type === "DELIVERY_VS_PAYMENT"
-        ? await this.blockchain.submitDvP({
-            intentId: existing.id,
-            payerAddress,
-            amount: existing.amount,
-            decimals,
-            contractAddress,
-          })
-        : await this.blockchain.submitConsentedPull({
-            intentId: existing.id,
-            payerAddress,
-            amount: existing.amount,
-            decimals,
-            contractAddress,
-          });
+    // Note: Contract execution happens on the frontend widget.
+    // This endpoint only verifies the EIP-712 signature and stores it.
+    // The frontend will execute createOrder() or initiatePull() directly on the contract.
+    // The backend will detect the transaction via polling (in getIntent) or event listeners.
 
     const saved = await this.prisma.paymentIntent.update({
       where: { id: existing.id },
       data: {
-        status: targetStatus,
+        status: targetStatus, // PROCESSING - waiting for blockchain transaction
         signature,
         signerAddress: payerAddress,
-        transactionHash: submit.transactionHash,
-        chainId: submit.chainId,
-        contractAddress: submit.contractAddress,
         phases: updatedPhases,
       },
     });
 
-    // Log blockchain transaction submission
-    await this.audit.logBlockchainTxSubmitted({
+    // Log signature verification (not transaction submission - that happens on frontend)
+    await this.audit.log({
       paymentIntentId: saved.id,
       merchantId,
+      eventType: "SIGNATURE_VERIFIED",
+      category: "AUTHORIZATION",
       amount: saved.amount,
       currency: saved.currency,
-      transactionHash: submit.transactionHash,
-      contractAddress: submit.contractAddress,
-      chainId: submit.chainId,
-      payerAddress,
+      fromStatus: currentStatus,
+      toStatus: targetStatus,
+      phase: "SIGNATURE_VERIFICATION",
+      phaseStatus: "COMPLETED",
+      actorType: "PAYER",
+      actorId: payerAddress,
+      metadata: {
+        signature,
+        payerAddress,
+      },
     });
 
     // Emit status changed event
@@ -309,20 +305,7 @@ export class IntentService {
       toStatus: targetStatus,
       amount: saved.amount,
       currency: saved.currency,
-      reason: "Signature verified",
-    });
-
-    // Emit blockchain transaction submitted event
-    await this.events.emitBlockchainTxSubmitted({
-      paymentIntentId: saved.id,
-      merchantId,
-      status: targetStatus,
-      amount: saved.amount,
-      currency: saved.currency,
-      transactionHash: submit.transactionHash,
-      contractAddress: submit.contractAddress,
-      chainId: submit.chainId,
-      payerAddress,
+      reason: "Signature verified - waiting for contract execution",
     });
 
     return this.toEntity(saved);
@@ -884,6 +867,63 @@ export class IntentService {
       select: { phases: true },
     });
     return (intent?.phases as PaymentIntentPhase[] | null) ?? [];
+  }
+
+  /**
+   * Create EscrowOrder for DELIVERY_VS_PAYMENT payment intent if it doesn't exist
+   */
+  private async createEscrowOrderIfNeeded(paymentIntent: any): Promise<void> {
+    const metadata = (paymentIntent.metadata as Record<string, unknown>) || {};
+    const merchantId = (paymentIntent as any).merchantId;
+
+    // Extract escrow parameters from metadata
+    const deliveryPeriod = (metadata.deliveryPeriod as number) || 2592000; // Default 30 days
+    const expectedDeliveryHash = (metadata.expectedDeliveryHash as string) || "0x0000000000000000000000000000000000000000000000000000000000000000";
+    const autoRelease = (metadata.autoRelease as boolean) ?? false;
+    const deliveryOracle = (metadata.deliveryOracle as string) || "0x0000000000000000000000000000000000000000";
+    const tokenAddress = (metadata.tokenAddress as string) || process.env.TOKEN_ADDRESS || "0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8";
+
+    // Calculate delivery deadline (current time + delivery period)
+    const now = Math.floor(Date.now() / 1000);
+    const deliveryDeadline = BigInt(now + deliveryPeriod).toString();
+
+    // Determine release type based on metadata (default to DELIVERY_PROOF)
+    // For now, we default to DELIVERY_PROOF - can be enhanced to support TIME_LOCKED, MILESTONE_LOCKED
+    const releaseType: "TIME_LOCKED" | "MILESTONE_LOCKED" | "DELIVERY_PROOF" | "AUTO_RELEASE" = 
+      (metadata.releaseType as string) === "TIME_LOCKED" ? "TIME_LOCKED" :
+      (metadata.releaseType as string) === "MILESTONE_LOCKED" ? "MILESTONE_LOCKED" :
+      autoRelease ? "AUTO_RELEASE" : "DELIVERY_PROOF";
+
+    // Get buyer address from signerAddress or metadata
+    const buyerAddress = paymentIntent.signerAddress || (metadata.buyerAddress as string) || "0x0000000000000000000000000000000000000000";
+
+    try {
+      await this.escrowOrder.createEscrowOrder({
+        paymentIntentId: paymentIntent.id,
+        merchantId,
+        contractAddress: paymentIntent.contractAddress || "0x0000000000000000000000000000000000000000",
+        buyerAddress,
+        tokenAddress,
+        amount: paymentIntent.amount,
+        deliveryPeriod,
+        deliveryDeadline,
+        expectedDeliveryHash,
+        autoReleaseOnProof: autoRelease,
+        deliveryOracle,
+        releaseType,
+        createTxHash: paymentIntent.transactionHash || undefined,
+        timeLockUntil: releaseType === "TIME_LOCKED" && metadata.timeLockUntil 
+          ? (metadata.timeLockUntil as string) 
+          : undefined,
+        disputeWindow: metadata.disputeWindow 
+          ? (metadata.disputeWindow as string) 
+          : "604800", // Default 7 days
+      });
+    } catch (error) {
+      // Log error but don't fail the payment confirmation
+      // In production, you might want to retry or alert
+      console.error(`Failed to create escrow order for payment intent ${paymentIntent.id}:`, error);
+    }
   }
 
   private toEntity(row: {
