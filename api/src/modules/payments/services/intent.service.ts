@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { isAddress, verifyTypedData } from "ethers";
 import { v4 as uuidv4 } from "uuid";
@@ -20,6 +20,7 @@ import { AuditService } from "./audit.service";
 import { PaymentStateMachineService } from "./payment-state-machine.service";
 import { PaymentEventService } from "./payment-event.service";
 import { SettlementQueueService } from "../queues/settlement-queue.service";
+import { TransactionConfirmationQueueService } from "../queues/transaction-confirmation-queue.service";
 import { LedgerService } from "./ledger.service";
 import { EscrowService } from "./escrow.service";
 import { EscrowOrderService } from "./escrow-order.service";
@@ -38,6 +39,8 @@ function asObjectRecord(v: unknown): Record<string, unknown> | null {
 
 @Injectable()
 export class IntentService {
+  private readonly logger = new Logger(IntentService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly routing: RoutingService,
@@ -48,6 +51,7 @@ export class IntentService {
     private readonly stateMachine: PaymentStateMachineService,
     private readonly events: PaymentEventService,
     private readonly settlementQueue: SettlementQueueService,
+    private readonly transactionConfirmationQueue: TransactionConfirmationQueueService,
     private readonly ledger: LedgerService,
     private readonly escrow: EscrowService,
     private readonly escrowOrder: EscrowOrderService,
@@ -63,12 +67,13 @@ export class IntentService {
     const id = `intent_${uuidv4()}`;
     const chainId = SEPOLIA_CHAIN_ID;
 
-    // Get merchant to retrieve contract addresses
+    // Get merchant to retrieve contract addresses and contractMerchantId
     const merchant = (await this.prisma.merchant.findUnique({
       where: { id: merchantId },
     })) as {
       dvpContractAddress: string | null;
       consentedPullContractAddress: string | null;
+      contractMerchantId: string | null;
     } | null;
 
     if (!merchant) {
@@ -132,6 +137,10 @@ export class IntentService {
             // Add token address (USDC on Sepolia by default)
             metadata.tokenAddress =
               process.env.TOKEN_ADDRESS || "0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8";
+            // Add contractMerchantId for frontend to use when calling createOrder
+            if (merchant.contractMerchantId) {
+              metadata.contractMerchantId = merchant.contractMerchantId;
+            }
           }
           return Object.keys(metadata).length > 0
             ? (metadata as unknown as Prisma.InputJsonValue)
@@ -267,14 +276,21 @@ export class IntentService {
     // The frontend will execute createOrder() or initiatePull() directly on the contract.
     // The backend will detect the transaction via polling (in getIntent) or event listeners.
 
+    // If transactionHash is provided (from frontend after contract execution), store it
+    const updateData: any = {
+      status: targetStatus, // PROCESSING - waiting for blockchain transaction
+      signature,
+      signerAddress: payerAddress,
+      phases: updatedPhases,
+    };
+
+    // Note: transactionHash can be provided in the DTO if the frontend executes the contract
+    // before calling confirmIntent, or it can be updated later via a separate endpoint
+    // For now, we'll handle it in a separate updateTransactionHash method
+
     const saved = await this.prisma.paymentIntent.update({
       where: { id: existing.id },
-      data: {
-        status: targetStatus, // PROCESSING - waiting for blockchain transaction
-        signature,
-        signerAddress: payerAddress,
-        phases: updatedPhases,
-      },
+      data: updateData,
     });
 
     // Log signature verification (not transaction submission - that happens on frontend)
@@ -311,6 +327,141 @@ export class IntentService {
     return this.toEntity(saved);
   }
 
+  /**
+   * Update payment intent with transaction hash (public endpoint).
+   * Called by frontend after contract execution to notify backend of the transaction.
+   */
+  async updateTransactionHash(
+    intentId: string,
+    transactionHash: string,
+  ): Promise<PaymentIntentEntity> {
+    const existing = await this.prisma.paymentIntent.findUnique({
+      where: { id: intentId },
+    });
+
+    if (!existing) {
+      throw new ApiException(
+        "resource_missing",
+        `Payment intent not found: ${intentId}`,
+        404,
+      );
+    }
+
+    // Update transaction hash and status if needed
+    // If status is still INITIATED, update to PROCESSING since we have a transaction hash
+    const updateData: any = {
+      transactionHash,
+    };
+
+    // If status is INITIATED, update to PROCESSING since we have a transaction hash
+    // This handles the case where the frontend posts transaction hash before calling confirmIntent
+    if (existing.status === PaymentIntentStatus.INITIATED) {
+      this.logger.log(
+        `Payment intent ${intentId} is INITIATED but has transaction hash - updating to PROCESSING`,
+      );
+      updateData.status = PaymentIntentStatus.PROCESSING;
+      
+      // Update phases to reflect blockchain confirmation in progress
+      const phases = (existing.phases as PaymentIntentPhase[] | null) ?? [];
+      const now = Math.floor(Date.now() / 1000);
+      const updatedPhases: PaymentIntentPhase[] = [
+        ...phases.filter((p) => p.phase !== "BLOCKCHAIN_CONFIRMATION"),
+        { phase: "BLOCKCHAIN_CONFIRMATION", status: "IN_PROGRESS", timestamp: now },
+      ];
+      updateData.phases = updatedPhases;
+    }
+
+    const saved = await this.prisma.paymentIntent.update({
+      where: { id: existing.id },
+      data: updateData,
+    });
+
+    // Log blockchain transaction submission
+    await this.audit.logBlockchainTxSubmitted({
+      paymentIntentId: saved.id,
+      merchantId: (existing as any).merchantId,
+      amount: saved.amount,
+      currency: saved.currency,
+      transactionHash,
+      contractAddress: saved.contractAddress || "0x0000000000000000000000000000000000000000",
+      chainId: saved.chainId || 11155111,
+      payerAddress: saved.signerAddress || "0x0000000000000000000000000000000000000000",
+    });
+
+    // Emit blockchain transaction submitted event
+    await this.events.emitBlockchainTxSubmitted({
+      paymentIntentId: saved.id,
+      merchantId: (existing as any).merchantId,
+      status: saved.status as PaymentIntentStatus,
+      amount: saved.amount,
+      currency: saved.currency,
+      transactionHash,
+      contractAddress: saved.contractAddress || "0x0000000000000000000000000000000000000000",
+      chainId: saved.chainId || 11155111,
+      payerAddress: saved.signerAddress || "0x0000000000000000000000000000000000000000",
+    });
+
+    // Create escrow order if needed (for DELIVERY_VS_PAYMENT type)
+    // This should be created when transaction hash is set, regardless of confirmation status
+    if (saved.type === "DELIVERY_VS_PAYMENT") {
+      try {
+        await this.createEscrowOrderIfNeeded(saved);
+        this.logger.log(
+          `Escrow order created/verified for payment intent ${saved.id}`,
+        );
+      } catch (error) {
+        // Log error but don't fail the transaction hash update
+        // Escrow order creation failure shouldn't prevent confirmation checking
+        this.logger.error(
+          `Failed to create escrow order for payment intent ${saved.id}:`,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
+
+    // Enqueue job to check transaction confirmations and update status asynchronously
+    // This moves the confirmation checking to a queue-based processor
+    // IMPORTANT: Enqueue if status is PROCESSING or if we just updated it to PROCESSING
+    // We should always enqueue when we have a transaction hash, regardless of initial status
+    const finalStatus = saved.status as PaymentIntentStatus;
+    if (
+      finalStatus === PaymentIntentStatus.PROCESSING ||
+      finalStatus === PaymentIntentStatus.INITIATED
+    ) {
+      try {
+        this.logger.log(
+          `Enqueuing transaction confirmation check for payment intent ${saved.id} with transaction hash ${transactionHash} (status: ${finalStatus})`,
+        );
+        await this.transactionConfirmationQueue.enqueueConfirmationCheck(
+          saved.id,
+          (existing as any).merchantId,
+          transactionHash,
+        );
+        this.logger.log(
+          `✅ Successfully enqueued transaction confirmation check job for payment intent ${saved.id}`,
+        );
+      } catch (error) {
+        // Log error and re-throw to ensure the error is visible
+        this.logger.error(
+          `❌ Failed to enqueue transaction confirmation check for payment intent ${saved.id}:`,
+          error instanceof Error ? error.message : String(error),
+        );
+        // Re-throw to ensure the error is visible
+        throw new ApiException(
+          "queue_error",
+          `Failed to enqueue transaction confirmation check: ${error instanceof Error ? error.message : "Unknown error"}`,
+          500,
+        );
+      }
+    } else {
+      this.logger.warn(
+        `⚠️ Skipping confirmation check enqueue for payment intent ${saved.id} - status is ${finalStatus}, not PROCESSING or INITIATED`,
+      );
+    }
+
+    return this.toEntity(saved);
+  }
+
   async getIntent(
     intentId: string,
     merchantId: string,
@@ -340,10 +491,11 @@ export class IntentService {
       existing.status === PaymentIntentStatus.PROCESSING &&
       existing.transactionHash
     ) {
-      const confirmations = await this.blockchain.getConfirmations(
+      // Check transaction receipt status instead of confirmations
+      const receiptStatus = await this.blockchain.getTransactionReceiptStatus(
         existing.transactionHash,
       );
-      if (confirmations >= 5) {
+      if (receiptStatus === 'success') {
         const phases = (existing.phases as PaymentIntentPhase[] | null) ?? [];
         const now = Math.floor(Date.now() / 1000);
         const updatedPhases: PaymentIntentPhase[] = [
@@ -598,7 +750,7 @@ export class IntentService {
       settlementStatus: SettlementStatus.IN_PROGRESS,
     });
 
-    // Process settlement in background (don't await - runs asynchronously)
+      // Process settlement in background (don't await - runs asynchronously)
     this.processSettlement(
       intentId,
       settlementMethod,
@@ -873,6 +1025,17 @@ export class IntentService {
    * Create EscrowOrder for DELIVERY_VS_PAYMENT payment intent if it doesn't exist
    */
   private async createEscrowOrderIfNeeded(paymentIntent: any): Promise<void> {
+    // Check if escrow order already exists for this payment intent
+    const existingEscrowOrder = await this.prisma.escrowOrder.findUnique({
+      where: { paymentIntentId: paymentIntent.id },
+    });
+
+    if (existingEscrowOrder) {
+      // Escrow order already exists, no need to create it again
+      console.log(`Escrow order already exists for payment intent ${paymentIntent.id}`);
+      return;
+    }
+
     const metadata = (paymentIntent.metadata as Record<string, unknown>) || {};
     const merchantId = (paymentIntent as any).merchantId;
 

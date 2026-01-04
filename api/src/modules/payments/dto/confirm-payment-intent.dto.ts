@@ -1,5 +1,5 @@
-import { ApiProperty } from "@nestjs/swagger";
-import { IsEthereumAddress, IsNotEmpty, IsString } from "class-validator";
+import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
+import { IsEthereumAddress, IsNotEmpty, IsOptional, IsString } from "class-validator";
 
 export class ConfirmPaymentIntentDto {
   @ApiProperty({ example: "0x1234567890abcdef..." })
@@ -12,4 +12,12 @@ export class ConfirmPaymentIntentDto {
   @IsNotEmpty()
   @IsEthereumAddress()
   payerAddress!: string;
+
+  @ApiPropertyOptional({ 
+    example: "0xabcdef1234567890...",
+    description: "Transaction hash from the blockchain transaction (createOrder or initiatePull). Optional if provided later via update endpoint."
+  })
+  @IsString()
+  @IsOptional()
+  transactionHash?: string;
 }

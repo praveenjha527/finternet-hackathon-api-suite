@@ -175,6 +175,11 @@ export class EscrowOrderService {
 
   /**
    * Submit a delivery proof and schedule processing job if auto-release is enabled
+   * 
+   * Sequence:
+   * 1. Submit delivery proof on-chain (via contract)
+   * 2. Store delivery proof in database
+   * 3. Schedule processing job (which will execute settlement after status updates)
    */
   async submitDeliveryProof(dto: SubmitDeliveryProofDto): Promise<{
     id: string;
@@ -194,7 +199,56 @@ export class EscrowOrderService {
 
     const submittedAt = BigInt(Math.floor(Date.now() / 1000)).toString();
 
-    // Create delivery proof
+    // Step 1: Submit delivery proof on-chain first
+    let submitTxHash = dto.submitTxHash;
+    if (escrowOrder.contractAddress && !submitTxHash) {
+      try {
+        const orderId = BigInt(escrowOrder.orderId);
+        
+        // Check order status before submitting - contract requires Created (0) or InTransit (1)
+        const orderState = await this.escrow.getOrderState(
+          escrowOrder.contractAddress,
+          orderId,
+        );
+        
+        if (!orderState) {
+          throw new Error(`Order state not found for orderId ${orderId}`);
+        }
+        
+        // Contract requires status to be Created (0) or InTransit (1) to submit delivery proof
+        if (orderState.status !== 0 && orderState.status !== 1) {
+          throw new ApiException(
+            "invalid_status",
+            `Cannot submit delivery proof: order status is ${orderState.status}, must be Created (0) or InTransit (1)`,
+            400,
+          );
+        }
+        
+        this.logger.log(
+          `Order status is ${orderState.status} (Created/InTransit), proceeding with delivery proof submission`,
+        );
+        
+        const result = await this.escrow.submitDeliveryProof(
+          escrowOrder.contractAddress,
+          orderId,
+          dto.proofHash,
+          dto.proofURI || "",
+          dto.submittedBy,
+        );
+        submitTxHash = result.hash;
+        this.logger.log(
+          `Delivery proof submitted on-chain for order ${dto.escrowOrderId}, txHash: ${submitTxHash}`,
+        );
+      } catch (error) {
+        this.logger.error(
+          `Failed to submit delivery proof on-chain for order ${dto.escrowOrderId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        // Continue with database storage even if on-chain submission fails
+        // This allows retry mechanisms to work
+      }
+    }
+
+    // Step 2: Create delivery proof in database
     const deliveryProof = await this.prisma.deliveryProof.create({
       data: {
         escrowOrderId: dto.escrowOrderId,
@@ -203,7 +257,7 @@ export class EscrowOrderService {
         proofURI: dto.proofURI,
         submittedBy: dto.submittedBy,
         submittedAt,
-        submitTxHash: dto.submitTxHash,
+        submitTxHash,
       },
     });
 
@@ -218,7 +272,8 @@ export class EscrowOrderService {
 
     this.logger.log(`Created delivery proof ${deliveryProof.id} for order ${dto.escrowOrderId}`);
 
-    // Schedule delivery proof processing job (will auto-release if enabled)
+    // Step 3: Schedule delivery proof processing job (will auto-release if enabled)
+    // The job will wait for order status to update to AwaitingSettlement, then execute settlement
     await this.programmablePaymentQueue.scheduleDeliveryProofProcess(
       dto.escrowOrderId,
       dto.paymentIntentId,

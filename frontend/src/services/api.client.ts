@@ -87,6 +87,45 @@ export class ApiClient {
       throw err;
     }
   }
+
+  /**
+   * Update payment intent with transaction hash (public endpoint, no API key required)
+   */
+  async updateTransactionHash(
+    intentId: string,
+    transactionHash: string,
+  ): Promise<PaymentIntentEntity> {
+    try {
+      const response = await axios.post<ApiResponse<PaymentIntentEntity>>(
+        `${this.baseURL}/payment-intents/public/${intentId}/transaction-hash`,
+        { transactionHash },
+      );
+      
+      // Check for error response
+      if (response.data.error) {
+        throw new Error(response.data.error.message || 'Failed to update transaction hash');
+      }
+      
+      // Validate response structure
+      if (!response.data || !response.data.data) {
+        console.error('Invalid API response structure:', response.data);
+        throw new Error('Invalid response from server');
+      }
+      
+      return response.data.data;
+    } catch (err) {
+      if (axios.isAxiosError(err)) {
+        if (err.response?.status === 404) {
+          throw new Error('Payment intent not found');
+        }
+        if (err.response?.data?.message) {
+          throw new Error(err.response.data.message);
+        }
+        throw new Error(`Failed to update transaction hash: ${err.message}`);
+      }
+      throw err;
+    }
+  }
 }
 
 export const apiClient = new ApiClient();

@@ -8,6 +8,7 @@ import { SubmitDeliveryProofDto } from "./dto/submit-delivery-proof.dto";
 import { RaiseDisputeDto } from "./dto/raise-dispute.dto";
 import { CreateMilestoneDto } from "./dto/create-milestone.dto";
 import { CompleteMilestoneDto } from "./dto/complete-milestone.dto";
+import { UpdateTransactionHashDto } from "./dto/update-transaction-hash.dto";
 import type { PaymentIntentEntity } from "./entities/payment-intent.entity";
 import { CurrentMerchant } from "../auth/decorators/current-merchant.decorator";
 import { Public } from "../auth/guards/api-key.guard";
@@ -56,6 +57,33 @@ export class PaymentsController {
     @Param("intentId") intentId: string,
   ): Promise<ApiResponse<PaymentIntentEntity>> {
     const intent = await this.paymentsService.getPublicIntent(intentId);
+    return {
+      id: intent.id,
+      object: "payment_intent",
+      status: intent.status,
+      data: intent,
+      created: intent.created,
+      updated: intent.updated,
+    };
+  }
+
+  /**
+   * Public endpoint for updating payment intent with transaction hash.
+   * Called by frontend after contract execution to notify backend of the transaction.
+   * This endpoint does not require API key authentication.
+   */
+  @Public()
+  @ApiParam({ name: "intentId" })
+  @Post("public/:intentId/transaction-hash")
+  @HttpCode(200)
+  async updateTransactionHash(
+    @Param("intentId") intentId: string,
+    @Body() dto: UpdateTransactionHashDto,
+  ): Promise<ApiResponse<PaymentIntentEntity>> {
+    const intent = await this.paymentsService.updateTransactionHash(
+      intentId,
+      dto.transactionHash,
+    );
     return {
       id: intent.id,
       object: "payment_intent",

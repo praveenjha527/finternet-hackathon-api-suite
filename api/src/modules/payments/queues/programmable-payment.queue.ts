@@ -4,6 +4,8 @@ import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../../../prisma/prisma.service";
 import { AuditService } from "../services/audit.service";
 import { PaymentEventService } from "../services/payment-event.service";
+import { EscrowService } from "../services/escrow.service";
+import { SettlementQueueService } from "./settlement-queue.service";
 
 export interface TimeLockReleaseJobData {
   type: "TIME_LOCK_RELEASE";
@@ -53,8 +55,11 @@ export class ProgrammablePaymentQueueProcessor extends WorkerHost {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly events: PaymentEventService,
+    private readonly escrow: EscrowService,
+    private readonly settlementQueue: SettlementQueueService,
   ) {
     super();
+    this.logger.log("ProgrammablePaymentQueueProcessor initialized and ready to process jobs");
   }
 
   async process(job: Job<ProgrammablePaymentJobData>): Promise<void> {
@@ -121,16 +126,87 @@ export class ProgrammablePaymentQueueProcessor extends WorkerHost {
       throw new Error(`Order status ${escrowOrder.orderStatus} does not allow release`);
     }
 
+    // Check order state from contract and execute settlement if needed
+    const orderId = BigInt(escrowOrder.orderId);
+    let settlementExecuted = false;
+
+    if (escrowOrder.contractAddress) {
+      try {
+        const orderState = await this.escrow.getOrderState(
+          escrowOrder.contractAddress,
+          orderId,
+        );
+
+        if (!orderState) {
+          throw new Error(`Order state not found for orderId ${orderId}`);
+        }
+
+        // Check if settlement is already executed
+        const settlementState = await this.escrow.getSettlementState(
+          escrowOrder.contractAddress,
+          orderId,
+        );
+
+        if (settlementState && settlementState.status === 1) {
+          // Settlement already executed
+          this.logger.log(
+            `Settlement already executed on-chain for orderId ${orderId}`,
+          );
+          settlementExecuted = true;
+        } else {
+          // Execute settlement on-chain if payment intent has settlement destination
+          const paymentIntent = escrowOrder.paymentIntent;
+          if (
+            paymentIntent.settlementMethod === "OFF_RAMP_MOCK" &&
+            paymentIntent.settlementDestination
+          ) {
+            this.logger.log(
+              `Executing settlement on-chain for orderId ${orderId} (time-locked release)`,
+            );
+
+            await this.escrow.executeSettlement(
+              escrowOrder.contractAddress,
+              orderId,
+              merchantId, // Pass merchantId to get merchant's Ethereum address from contract
+              "0x",
+            );
+
+            settlementExecuted = true;
+            this.logger.log(
+              `Settlement executed on-chain for orderId ${orderId}`,
+            );
+          }
+        }
+      } catch (error) {
+        this.logger.error(
+          `Failed to execute on-chain settlement for time-locked release (orderId ${orderId}):`,
+          error instanceof Error ? error.message : String(error),
+        );
+        // Continue with database update even if on-chain execution fails
+      }
+    }
+
     // Update order status to indicate release
-    // Note: Actual fund release happens on-chain via contract interaction
-    // This job primarily tracks the state and can trigger notifications
     await this.prisma.escrowOrder.update({
       where: { id: escrowOrderId },
       data: {
         releasedAt: currentTimestamp.toString(),
         orderStatus: "COMPLETED",
+        settlementStatus: settlementExecuted ? "EXECUTED" : "NONE",
       },
     });
+
+    // If settlement was executed, enqueue off-ramp processing
+    if (settlementExecuted && escrowOrder.paymentIntent.settlementMethod === "OFF_RAMP_MOCK") {
+      await this.settlementQueue.enqueueSettlement({
+        paymentIntentId,
+        merchantId,
+        settlementMethod: escrowOrder.paymentIntent.settlementMethod,
+        settlementDestination: escrowOrder.paymentIntent.settlementDestination,
+        amount: escrowOrder.amount,
+        currency: escrowOrder.paymentIntent.currency,
+      });
+    }
 
     // Log the time lock release event
     await this.audit.log({
@@ -180,8 +256,68 @@ export class ProgrammablePaymentQueueProcessor extends WorkerHost {
       throw new Error(`Milestone ${milestoneId} not completed yet`);
     }
 
+    // Check order state from contract and execute settlement if needed
+    const escrowOrder = milestone.escrowOrder;
+    const orderId = BigInt(escrowOrder.orderId);
+    let settlementExecuted = false;
+
+    if (escrowOrder.contractAddress) {
+      try {
+        const orderState = await this.escrow.getOrderState(
+          escrowOrder.contractAddress,
+          orderId,
+        );
+
+        if (!orderState) {
+          throw new Error(`Order state not found for orderId ${orderId}`);
+        }
+
+        // Check if settlement is already executed
+        const settlementState = await this.escrow.getSettlementState(
+          escrowOrder.contractAddress,
+          orderId,
+        );
+
+        if (settlementState && settlementState.status === 1) {
+          // Settlement already executed
+          this.logger.log(
+            `Settlement already executed on-chain for orderId ${orderId}`,
+          );
+          settlementExecuted = true;
+        } else {
+          // For milestone releases, execute settlement when milestone is complete
+          const paymentIntent = escrowOrder.paymentIntent;
+          if (
+            paymentIntent.settlementMethod === "OFF_RAMP_MOCK" &&
+            paymentIntent.settlementDestination
+          ) {
+            this.logger.log(
+              `Executing settlement on-chain for orderId ${orderId} (milestone release)`,
+            );
+
+            await this.escrow.executeSettlement(
+              escrowOrder.contractAddress,
+              orderId,
+              merchantId, // Pass merchantId to get merchant's Ethereum address from contract
+              "0x",
+            );
+
+            settlementExecuted = true;
+            this.logger.log(
+              `Settlement executed on-chain for orderId ${orderId}`,
+            );
+          }
+        }
+      } catch (error) {
+        this.logger.error(
+          `Failed to execute on-chain settlement for milestone (orderId ${orderId}):`,
+          error instanceof Error ? error.message : String(error),
+        );
+        // Continue with database update even if on-chain execution fails
+      }
+    }
+
     // Update milestone status to released
-    // Note: Actual fund release happens on-chain via contract interaction
     const currentTimestamp = BigInt(Math.floor(Date.now() / 1000));
 
     await this.prisma.paymentMilestone.update({
@@ -191,6 +327,18 @@ export class ProgrammablePaymentQueueProcessor extends WorkerHost {
         releasedAt: currentTimestamp.toString(),
       },
     });
+
+    // If settlement was executed, enqueue off-ramp processing
+    if (settlementExecuted && escrowOrder.paymentIntent.settlementMethod === "OFF_RAMP_MOCK") {
+      await this.settlementQueue.enqueueSettlement({
+        paymentIntentId,
+        merchantId,
+        settlementMethod: escrowOrder.paymentIntent.settlementMethod,
+        settlementDestination: escrowOrder.paymentIntent.settlementDestination,
+        amount: escrowOrder.amount,
+        currency: escrowOrder.paymentIntent.currency,
+      });
+    }
 
     // Log milestone release
     await this.audit.log({
@@ -242,6 +390,60 @@ export class ProgrammablePaymentQueueProcessor extends WorkerHost {
       return;
     }
 
+    // Check order state from contract and execute settlement if needed
+    const orderId = BigInt(escrowOrder.orderId);
+    let settlementExecuted = false;
+
+    if (escrowOrder.contractAddress) {
+      try {
+        const orderState = await this.escrow.getOrderState(
+          escrowOrder.contractAddress,
+          orderId,
+        );
+
+        if (!orderState) {
+          throw new Error(`Order state not found for orderId ${orderId}`);
+        }
+
+        if (escrowOrder.autoReleaseOnProof) {
+          // Check if order status is AwaitingSettlement (OrderStatus enum: 0=Created, 1=InTransit, 2=Delivered, 3=AwaitingSettlement, 4=Completed, etc.)
+          // The contract automatically releases funds and sets status to AwaitingSettlement (3) when delivery proof is submitted with auto-release enabled
+          // Use Number() to handle potential bigint/string conversions
+          const orderStatusNum = Number(orderState.status);
+          if (orderStatusNum === 3) {
+            // Order status is AwaitingSettlement - funds have been released to merchant's contract balance
+            // Enqueue settlement job which will check if settlement is already executed and handle off-ramp + confirmation
+            settlementExecuted = true; // Mark as ready for settlement (job will handle execution)
+            this.logger.log(
+              `Order ${orderId} status is AwaitingSettlement (3) - funds released, enqueueing settlement job`,
+            );
+          } else {
+            // Order status is not yet AwaitingSettlement - delivery proof transaction might not be confirmed yet, or auto-release hasn't executed
+            // Re-queue the job with a delay to wait for status update
+            this.logger.log(
+              `Order ${orderId} status is ${orderStatusNum} (raw: ${orderState.status}), not yet AwaitingSettlement (3). Re-queuing job to wait for auto-release.`,
+            );
+            throw new Error(
+              "Order status not yet AwaitingSettlement, will retry",
+            );
+          }
+        }
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        
+        // If it's a retry error, throw it so BullMQ can retry
+        if (errorMessage.includes("will retry")) {
+          throw error;
+        }
+
+        this.logger.error(
+          `Failed to check order state for delivery proof (orderId ${orderId}): ${errorMessage}`,
+        );
+        // Continue with database update even if check fails
+      }
+    }
+
     // Update order status
     const currentTimestamp = BigInt(Math.floor(Date.now() / 1000));
 
@@ -251,8 +453,24 @@ export class ProgrammablePaymentQueueProcessor extends WorkerHost {
         releasedAt: currentTimestamp.toString(),
         orderStatus: "COMPLETED",
         actualDeliveryHash: deliveryProof.proofHash,
+        settlementStatus: settlementExecuted ? "SCHEDULED" : "NONE", // Mark as scheduled, settlement queue will update to EXECUTED/CONFIRMED
       },
     });
+
+    // Enqueue settlement job - it will check if settlement is already executed and handle off-ramp + confirmation
+    if (settlementExecuted && escrowOrder.paymentIntent.settlementMethod === "OFF_RAMP_MOCK") {
+      await this.settlementQueue.enqueueSettlement({
+        paymentIntentId,
+        merchantId,
+        settlementMethod: escrowOrder.paymentIntent.settlementMethod,
+        settlementDestination: escrowOrder.paymentIntent.settlementDestination!,
+        amount: escrowOrder.paymentIntent.amount,
+        currency: escrowOrder.paymentIntent.currency,
+      });
+      this.logger.log(
+        `Settlement job enqueued for payment intent ${paymentIntentId} (orderId ${orderId})`,
+      );
+    }
 
     // Log delivery proof release
     await this.audit.log({

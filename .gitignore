@@ -179,3 +179,26 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+
+# Contract artifacts
+contracts/artifacts/
+
+# Distribution
+dist/
+dist-ssr/
+*.local
+api/dist/
+frontend/dist/
+frontend/dist-ssr/
+api/dist2/**/*
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

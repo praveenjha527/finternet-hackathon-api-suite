@@ -7,7 +7,7 @@ import { apiClient, PaymentIntentEntity } from '../services/api.client';
 import './PaymentPage.css';
 
 // USDC address on Sepolia (you can move this to env vars)
-const USDC_SEPOLIA = '0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8';
+const USDC_SEPOLIA = '0x1c7d4b196cb0c7b01d743fbc6116a902379c7238';
 
 // Contract ABIs
 const ERC20_ABI = [
@@ -30,6 +30,20 @@ const ERC20_ABI = [
       { name: 'spender', type: 'address' },
     ],
     outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    name: 'balanceOf',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    name: 'decimals',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint8' }],
   },
 ] as const;
 
@@ -80,7 +94,7 @@ const CONSENTED_PULL_ABI = [
   },
 ] as const;
 
-type PaymentStep = 'loading' | 'connect' | 'sign' | 'approve' | 'execute' | 'success' | 'error';
+type PaymentStep = 'loading' | 'connect' | 'sign' | 'approve' | 'execute' | 'processing' | 'success' | 'error';
 
 export default function PaymentPage() {
   const [intentId, setIntentId] = useState<string | null>(null);
@@ -89,6 +103,7 @@ export default function PaymentPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [eip712Signature, setEip712Signature] = useState<string | null>(null);
+  const [isPolling, setIsPolling] = useState(false);
 
   // Wagmi hooks
   const { address, isConnected } = useAccount();
@@ -129,10 +144,22 @@ export default function PaymentPage() {
   const { signTypedDataAsync, isPending: isSigning, error: signError } = useSignTypedData();
 
   // Check token allowance
-  const tokenAddress = import.meta.env.VITE_USDC_ADDRESS || USDC_SEPOLIA;
+  // Use consistent token address - prefer VITE_USDC_ADDRESS, fallback to VITE_TOKEN_ADDRESS, then default
+  const tokenAddress = import.meta.env.VITE_USDC_ADDRESS || import.meta.env.VITE_TOKEN_ADDRESS || USDC_SEPOLIA;
   const contractAddress = paymentIntent?.contractAddress;
   const amountInWei = paymentIntent ? parseUnits(paymentIntent.amount, 6) : BigInt(0);
   
+  // USDC Edge Case: Check balance before allowing operations
+  const { data: balance } = useReadContract({
+    address: tokenAddress as `0x${string}`,
+    abi: ERC20_ABI,
+    functionName: 'balanceOf',
+    args: address ? [address as `0x${string}`] : undefined,
+    query: {
+      enabled: !!address && isAddress(tokenAddress),
+    },
+  });
+
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
     address: tokenAddress as `0x${string}`,
     abi: ERC20_ABI,
@@ -144,6 +171,7 @@ export default function PaymentPage() {
   });
 
   const needsApproval = allowance !== undefined && allowance < amountInWei;
+  const hasInsufficientBalance = balance !== undefined && balance < amountInWei;
 
   // Get intent ID from URL query parameter
   useEffect(() => {
@@ -163,6 +191,10 @@ export default function PaymentPage() {
     if (isConnected && address && paymentIntent) {
       if (paymentIntent.status === 'SUCCEEDED' || paymentIntent.status === 'SETTLED') {
         setStep('success');
+      } else if (hasInsufficientBalance) {
+        // Edge case: User doesn't have enough USDC balance
+        setError(`Insufficient USDC balance. You have ${balance ? (Number(balance) / 1e6).toFixed(2) : '0'} USDC, but need ${paymentIntent.amount} USDC.`);
+        setStep('error');
       } else if (!eip712Signature) {
         setStep('sign');
       } else if (needsApproval) {
@@ -173,37 +205,121 @@ export default function PaymentPage() {
     } else if (!isConnected && paymentIntent) {
       setStep('connect');
     }
-  }, [isConnected, address, paymentIntent, eip712Signature, needsApproval]);
+  }, [isConnected, address, paymentIntent, eip712Signature, needsApproval, hasInsufficientBalance, balance]);
 
   // Handle approval confirmation
   useEffect(() => {
     if (isApprovalConfirmed && step === 'approve') {
       toast.success('Token approval confirmed!');
-      // Refetch allowance to ensure it's updated, then move to execute step
-      refetchAllowance().then(() => {
-        // Small delay to ensure state updates propagate
-        setTimeout(() => {
-          setStep('execute');
-        }, 500);
-      }).catch((err) => {
-        console.error('Failed to refetch allowance:', err);
-        // Still move to execute step - the transaction is confirmed
+      // Wait for blockchain state to update and verify allowance
+      const verifyAndProceed = async () => {
+        let attempts = 0;
+        const maxAttempts = 10;
+        const delay = 1000; // 1 second between attempts
+        
+        while (attempts < maxAttempts) {
+          try {
+            const result = await refetchAllowance();
+            const updatedAllowance = result.data as bigint | undefined;
+            const requiredAmount = paymentIntent ? parseUnits(paymentIntent.amount, 6) : BigInt(0);
+            
+            console.log(`Allowance check attempt ${attempts + 1}:`, {
+              allowance: updatedAllowance?.toString(),
+              required: requiredAmount.toString(),
+              sufficient: updatedAllowance !== undefined && updatedAllowance >= requiredAmount,
+            });
+            
+            if (updatedAllowance !== undefined && updatedAllowance >= requiredAmount) {
+              console.log('✅ Allowance confirmed, proceeding to execute step');
+              setStep('execute');
+              return;
+            }
+            
+            attempts++;
+            if (attempts < maxAttempts) {
+              await new Promise(resolve => setTimeout(resolve, delay));
+            }
+          } catch (err) {
+            console.error(`Allowance check attempt ${attempts + 1} failed:`, err);
+            attempts++;
+            if (attempts < maxAttempts) {
+              await new Promise(resolve => setTimeout(resolve, delay));
+            }
+          }
+        }
+        
+        // If we've exhausted retries, still move to execute step
+        // The transaction was confirmed, so the allowance should be there
+        console.warn('⚠️ Allowance verification timed out after', maxAttempts, 'attempts, proceeding anyway');
+        toast('Approval confirmed, but allowance verification timed out. Proceeding...', { icon: '⚠️' });
         setStep('execute');
-      });
+      };
+      
+      verifyAndProceed();
     }
-  }, [isApprovalConfirmed, step, refetchAllowance]);
+  }, [isApprovalConfirmed, step, refetchAllowance, paymentIntent]);
 
   // Handle execution confirmation
   useEffect(() => {
-    if (isExecutionConfirmed && executeHash) {
-      toast.success('Payment transaction confirmed!');
-      setStep('success');
-      // Poll for payment intent status update
-      setTimeout(() => {
-        if (intentId) {
-          loadPaymentIntent(intentId);
-        }
-      }, 3000);
+    if (isExecutionConfirmed && executeHash && intentId) {
+      console.log('Transaction confirmed, updating backend with transaction hash:', executeHash);
+      
+      // Update backend with transaction hash
+      apiClient.updateTransactionHash(intentId, executeHash)
+        .then((updatedIntent) => {
+          console.log('Backend updated with transaction hash, payment intent:', updatedIntent);
+          setPaymentIntent(updatedIntent);
+          
+          // Show message that transaction is processed
+          toast.success('Transaction processed successfully!');
+          setStep('processing'); // Move to processing step to show the message
+          
+          // Start polling for payment intent status until it's SUCCEEDED or SETTLED
+          setIsPolling(true);
+          let pollCount = 0;
+          const maxPolls = 60; // Poll for up to 2 minutes (60 * 2 seconds)
+          
+          const pollInterval = setInterval(async () => {
+            try {
+              pollCount++;
+              const currentIntent = await apiClient.getPaymentIntent(intentId);
+              setPaymentIntent(currentIntent);
+              
+              console.log(`Polling payment intent status (${pollCount}/${maxPolls}):`, currentIntent.status);
+              
+              if (currentIntent.status === 'SUCCEEDED' || currentIntent.status === 'SETTLED') {
+                clearInterval(pollInterval);
+                setIsPolling(false);
+                setStep('success');
+                toast.success('Payment completed successfully!');
+              } else if (currentIntent.status === 'CANCELED' || currentIntent.status === 'REQUIRES_ACTION') {
+                clearInterval(pollInterval);
+                setIsPolling(false);
+                setStep('error');
+                setError('Payment failed or was canceled');
+              } else if (pollCount >= maxPolls) {
+                clearInterval(pollInterval);
+                setIsPolling(false);
+                console.warn('Polling timeout - payment intent status:', currentIntent.status);
+                toast('Payment is still processing. Please check back later.', { icon: '⚠️' });
+                setStep('success'); // Show success anyway since transaction was confirmed
+              }
+            } catch (err) {
+              console.error('Error polling payment intent:', err);
+              // Continue polling on error, but stop after max attempts
+              if (pollCount >= maxPolls) {
+                clearInterval(pollInterval);
+                setIsPolling(false);
+              }
+            }
+          }, 2000); // Poll every 2 seconds
+        })
+        .catch((err) => {
+          console.error('Failed to update transaction hash:', err);
+          toast.error('Failed to update payment status. Please check the transaction manually.');
+          // Still show success since the transaction was confirmed on-chain
+          setStep('success');
+        });
     }
   }, [isExecutionConfirmed, executeHash, intentId]);
 
@@ -244,8 +360,22 @@ export default function PaymentPage() {
       if (isUserRejection(approvalError)) {
         toast.error('Approval cancelled. Please approve token spending to continue.');
       } else {
-        toast.error(approvalError.message || 'Approval failed');
-        setError(approvalError.message || 'Approval failed');
+        // USDC Edge Case 6: Better error messages for approval failures
+        const errorMessage = approvalError.message || 'Approval failed';
+        let userFriendlyMessage = errorMessage;
+        
+        if (errorMessage.includes('insufficient funds') || errorMessage.includes('insufficient balance')) {
+          userFriendlyMessage = 'Insufficient USDC balance for gas fees. Please add more ETH for gas.';
+        } else if (errorMessage.includes('blacklist') || errorMessage.includes('frozen')) {
+          userFriendlyMessage = 'USDC account is restricted. Please contact USDC support.';
+        } else if (errorMessage.includes('paused')) {
+          userFriendlyMessage = 'USDC transfers are currently paused. Please try again later.';
+        } else if (errorMessage.includes('revert') || errorMessage.includes('execution reverted')) {
+          userFriendlyMessage = 'Approval failed. The USDC contract may have restrictions. Please try again or contact support.';
+        }
+        
+        toast.error(userFriendlyMessage);
+        setError(userFriendlyMessage);
         setStep('error');
       }
     }
@@ -256,8 +386,24 @@ export default function PaymentPage() {
       if (isUserRejection(executeError)) {
         toast.error('Transaction cancelled. Please confirm the payment transaction to complete.');
       } else {
-        toast.error(executeError.message || 'Transaction failed');
-        setError(executeError.message || 'Transaction failed');
+        // USDC Edge Case 3: Better error messages for USDC-specific errors
+        const errorMessage = executeError.message || 'Transaction failed';
+        let userFriendlyMessage = errorMessage;
+        
+        if (errorMessage.includes('TRANSFER_FROM_FAILED')) {
+          userFriendlyMessage = 'Token transfer failed. Please ensure you have approved the contract to spend your USDC and have sufficient balance.';
+        } else if (errorMessage.includes('insufficient funds') || errorMessage.includes('insufficient balance')) {
+          userFriendlyMessage = 'Insufficient USDC balance. Please add more USDC to your wallet.';
+        } else if (errorMessage.includes('allowance') || errorMessage.includes('approval')) {
+          userFriendlyMessage = 'Token approval issue. Please try approving again.';
+        } else if (errorMessage.includes('blacklist') || errorMessage.includes('frozen')) {
+          userFriendlyMessage = 'USDC account is restricted. Please contact USDC support.';
+        } else if (errorMessage.includes('paused')) {
+          userFriendlyMessage = 'USDC transfers are currently paused. Please try again later.';
+        }
+        
+        toast.error(userFriendlyMessage);
+        setError(userFriendlyMessage);
         setStep('error');
       }
     }
@@ -330,13 +476,34 @@ export default function PaymentPage() {
 
     try {
       setError(null);
+      
+      // USDC Edge Case: Check balance before approval
+      if (balance !== undefined && balance < amountInWei) {
+        const balanceFormatted = (Number(balance) / 1e6).toFixed(6);
+        toast.error(`Insufficient USDC balance. You have ${balanceFormatted} USDC, but need ${paymentIntent.amount} USDC.`);
+        setError(`Insufficient USDC balance. You have ${balanceFormatted} USDC, but need ${paymentIntent.amount} USDC.`);
+        setStep('error');
+        return;
+      }
+
       const maxApproval = BigInt('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'); // Max uint256
+      // Use the same tokenAddress variable that's used for allowance check and execution
+      // This ensures consistency across all operations
+      
+      console.log('Approving USDC token:', {
+        tokenAddress: tokenAddress,
+        spender: contractAddress,
+        amount: maxApproval.toString(),
+        userAddress: address,
+        userBalance: balance?.toString(),
+      });
       
       writeContractApproval({
         address: tokenAddress as `0x${string}`,
         abi: ERC20_ABI,
         functionName: 'approve',
         args: [contractAddress as `0x${string}`, maxApproval],
+        gas: BigInt(100000), // Set gas limit for approval
       });
     } catch (err) {
       // Error handling is done in the useEffect for approvalError
@@ -370,17 +537,69 @@ export default function PaymentPage() {
     try {
       setError(null);
       const amount = parseUnits(paymentIntent.amount, 6);
-      const tokenAddress = import.meta.env.VITE_TOKEN_ADDRESS || USDC_SEPOLIA;
+      
+      // Use the same token address that was used for approval and allowance check
+      // This ensures consistency across all operations
+      const executionTokenAddress = tokenAddress; // Use the same tokenAddress from the hook
+      
+      console.log('Using token address for execution:', {
+        tokenAddress: executionTokenAddress,
+        contractAddress: contractAddress,
+        userAddress: address,
+      });
+
+      // Double-check allowance before executing
+      // This prevents TRANSFER_FROM_FAILED errors
+      if (address && contractAddress) {
+        // Use the same token address for allowance check (already set above)
+        const checkTokenAddress = executionTokenAddress;
+        
+        // Check current allowance - if insufficient, refetch and verify
+        if (allowance === undefined || allowance < amount) {
+          console.log('Allowance check: Current allowance insufficient, refetching...');
+          console.log('Allowance check details:', {
+            userAddress: address,
+            contractAddress: contractAddress,
+            tokenAddress: checkTokenAddress,
+            currentAllowance: allowance?.toString(),
+            requiredAmount: amount.toString(),
+          });
+          
+          const result = await refetchAllowance();
+          const updatedAllowance = result.data as bigint | undefined;
+          
+          console.log('Allowance check after refetch:', {
+            current: allowance?.toString(),
+            updated: updatedAllowance?.toString(),
+            required: amount.toString(),
+            sufficient: updatedAllowance !== undefined && updatedAllowance >= amount,
+          });
+          
+          if (updatedAllowance === undefined || updatedAllowance < amount) {
+            toast.error(`Insufficient token approval. Required: ${amount.toString()}, Approved: ${updatedAllowance?.toString() || '0'}`);
+            setStep('approve');
+            return;
+          }
+        } else {
+          console.log('Allowance check passed:', {
+            allowance: allowance.toString(),
+            required: amount.toString(),
+          });
+        }
+      }
 
       if (paymentIntent.type === 'DELIVERY_VS_PAYMENT') {
         // Use new createOrder function for escrow-based payments
         const metadata = paymentIntent.metadata as Record<string, unknown> || {};
         
-        // Derive merchantId and orderId from paymentIntent
-        // In production, these should come from the API response
-        // For now, use a default merchantId derived from metadata or paymentIntent id
-        const merchantIdStr = (metadata.merchantId as string) || paymentIntent.id;
-        const merchantId = stringToUint256(merchantIdStr);
+        // Get contractMerchantId from metadata (provided by backend)
+        // Fallback to hash-based derivation if not available (for backward compatibility)
+        const contractMerchantIdStr = (metadata.contractMerchantId as string);
+        const merchantId = contractMerchantIdStr 
+          ? BigInt(contractMerchantIdStr)
+          : stringToUint256(paymentIntent.id);
+        
+        // Derive orderId from paymentIntent id (using hash-based approach)
         const orderId = stringToUint256(paymentIntent.id);
         
         // Get escrow parameters from metadata or use defaults
@@ -388,6 +607,15 @@ export default function PaymentPage() {
         const expectedDeliveryHash = (metadata.expectedDeliveryHash as string) || '0x0000000000000000000000000000000000000000000000000000000000000000';
         const autoRelease = (metadata.autoRelease as boolean) ?? true;
         const deliveryOracle = (metadata.deliveryOracle as string) || '0x0000000000000000000000000000000000000000';
+
+        console.log('Executing createOrder with params:', {
+          merchantId: merchantId.toString(),
+          orderId: orderId.toString(),
+          buyer: address,
+          token: executionTokenAddress,
+          amount: amount.toString(),
+          contract: contractAddress,
+        });
 
         writeContractExecute({
           address: contractAddress as `0x${string}`,
@@ -397,13 +625,14 @@ export default function PaymentPage() {
             merchantId,
             orderId,
             address as `0x${string}`,
-            tokenAddress as `0x${string}`,
+            executionTokenAddress as `0x${string}`,
             amount,
             deliveryPeriod,
             expectedDeliveryHash as `0x${string}`,
             autoRelease,
             deliveryOracle as `0x${string}`,
           ],
+          gas: BigInt(500000), // Set gas limit for createOrder
         });
       } else {
         // Consented pull still uses the old method
@@ -482,7 +711,8 @@ export default function PaymentPage() {
           </div>
         )}
 
-        {step === 'connect' && (
+        {/* Only show action buttons if payment intent status is INITIATED */}
+        {paymentIntent.status === 'INITIATED' && step === 'connect' && (
           <div className="payment-actions">
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1rem' }}>
               <ConnectKitButton />
@@ -493,7 +723,7 @@ export default function PaymentPage() {
           </div>
         )}
 
-        {step === 'sign' && address && typedData && (
+        {paymentIntent.status === 'INITIATED' && step === 'sign' && address && typedData && (
           <div className="payment-actions">
             <div className="wallet-info">
               <p>Connected: {address.slice(0, 6)}...{address.slice(-4)}</p>
@@ -524,7 +754,7 @@ export default function PaymentPage() {
           </div>
         )}
 
-        {step === 'approve' && address && contractAddress && (
+        {paymentIntent.status === 'INITIATED' && step === 'approve' && address && contractAddress && (
           <div className="payment-actions">
             <div className="wallet-info">
               <p>Connected: {address.slice(0, 6)}...{address.slice(-4)}</p>
@@ -575,21 +805,27 @@ export default function PaymentPage() {
           </div>
         )}
 
-        {step === 'execute' && address && contractAddress && (
+        {paymentIntent.status === 'INITIATED' && step === 'execute' && address && contractAddress && (
           <div className="payment-actions">
             <div className="wallet-info">
               <p>Connected: {address.slice(0, 6)}...{address.slice(-4)}</p>
             </div>
             
-            {(isExecuting || isExecutionConfirming) && (
+            {(isExecuting || isExecutionConfirming || isPolling) && (
               <div className="status-message status-confirming">
                 <div className="status-spinner"></div>
                 <div className="status-content">
                   <p className="status-title">
-                    {isExecutionConfirming ? 'Transaction Confirming' : 'Executing Payment'}
+                    {isPolling 
+                      ? 'Processing Payment' 
+                      : isExecutionConfirming 
+                      ? 'Transaction Confirming' 
+                      : 'Executing Payment'}
                   </p>
                   <p className="status-description">
-                    {isExecutionConfirming 
+                    {isPolling
+                      ? 'Waiting for payment to be processed and confirmed...'
+                      : isExecutionConfirming 
                       ? 'Waiting for blockchain confirmation...' 
                       : 'Please confirm the payment transaction in your wallet'}
                   </p>
@@ -609,20 +845,51 @@ export default function PaymentPage() {
 
             <button 
               onClick={handleExecute} 
-              disabled={isExecuting || isExecutionConfirming} 
+              disabled={isExecuting || isExecutionConfirming || isPolling} 
               className="btn-primary"
             >
-              {isExecuting 
+              {isPolling
+                ? 'Processing...'
+                : isExecuting 
                 ? 'Executing...' 
                 : isExecutionConfirming 
                 ? 'Confirming...' 
                 : `Execute Payment (${paymentIntent.type})`}
             </button>
-            {!isExecuting && !isExecutionConfirming && (
+            {!isExecuting && !isExecutionConfirming && !isPolling && (
               <p className="help-text">
                 Execute the payment transaction. This will transfer the tokens to complete the payment.
               </p>
             )}
+          </div>
+        )}
+
+        {step === 'processing' && (
+          <div className="payment-processing">
+            <div className="status-message status-confirming">
+              <div className="status-spinner"></div>
+              <div className="status-content">
+                <p className="status-title">Transaction Processed</p>
+                <p className="status-description">
+                  Your transaction has been submitted and is being processed. The payment status will update automatically.
+                </p>
+                {executeHash && (
+                  <div className="tx-info" style={{ marginTop: '1rem' }}>
+                    <p>Transaction Hash:</p>
+                    <a href={explorerUrl} target="_blank" rel="noopener noreferrer" className="tx-link">
+                      {executeHash.slice(0, 10)}...{executeHash.slice(-8)}
+                    </a>
+                  </div>
+                )}
+                {paymentIntent && (
+                  <div style={{ marginTop: '1rem' }}>
+                    <p className="status-description">
+                      Current Status: <strong>{paymentIntent.status}</strong>
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
 

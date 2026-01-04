@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { Contract, JsonRpcProvider, Wallet, parseUnits } from "ethers";
+import { Contract, JsonRpcProvider, Wallet, parseUnits, Signature, ContractTransactionResponse } from "ethers";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../../prisma/prisma.service";
 import { BlockchainService } from "./blockchain.service";
@@ -181,8 +181,6 @@ export class EscrowService {
    * Strategy: Store contract merchantId in Merchant metadata or use a deterministic mapping.
    */
   async getContractMerchantId(merchantId: string): Promise<bigint> {
-    // For hackathon: use a simple hash-based mapping
-    // In production, you should store contract merchantId in the Merchant model
     const merchant = await this.prisma.merchant.findUnique({
       where: { id: merchantId },
     });
@@ -195,8 +193,12 @@ export class EscrowService {
       );
     }
 
-    // Check if merchant has a stored contract merchantId in metadata
-    // For now, use hash-based approach
+    // Use stored contractMerchantId if available, otherwise fall back to hash-based approach
+    if (merchant.contractMerchantId) {
+      return BigInt(merchant.contractMerchantId);
+    }
+
+    // Fallback: hash-based approach for backward compatibility
     const hash = BigInt(
       "0x" +
         merchantId
@@ -206,6 +208,264 @@ export class EscrowService {
           .slice(0, 64),
     );
     return hash;
+  }
+
+  /**
+   * Submit delivery proof on the escrow contract.
+   * This must be called before executeSettlement can be called.
+   * 
+   * @param contractAddress - Contract address
+   * @param orderId - Order ID
+   * @param proofHash - Delivery proof hash (bytes32)
+   * @param proofURI - URI to delivery proof
+   * @param submittedBy - Address submitting the proof (for signing)
+   * @returns Transaction hash
+   */
+  async submitDeliveryProof(
+    contractAddress: string,
+    orderId: bigint,
+    proofHash: string,
+    proofURI: string,
+    submittedBy: string,
+  ): Promise<{ hash: string }> {
+    if (!this.signer || !contractAddress || !this.provider) {
+      throw new ApiException(
+        "contract_execution_failed",
+        "Cannot submit delivery proof: signer, contract address, or provider not available",
+        500,
+      );
+    }
+  
+    try {
+      const contract = new Contract(
+        contractAddress,
+        DVPEscrowWithSettlementAbi,
+        this.signer,
+      ) as unknown as DvpEscrowContract;
+  
+      // Get chainId from provider
+      const network = await this.provider.getNetwork();
+      const chainId = Number(network.chainId);
+  
+      // Get current nonce for this orderId from the contract
+      const nonce = await contract.deliveryOracleNonce(orderId);
+  
+      // FIXED: Use deadline instead of timestamp for signature validation
+      const currentTimestamp = Math.floor(Date.now() / 1000);
+      const deadline = BigInt(currentTimestamp + 300); // 5 minutes deadline
+  
+      // Build EIP-712 typed data matching the FIXED contract
+      const domain = {
+        name: "DVPEscrow",
+        version: "1",
+        chainId: chainId,
+        verifyingContract: contractAddress
+      };
+  
+      const types = {
+        DeliveryProof: [
+          { name: "orderId", type: "uint256" },
+          { name: "deliveryHash", type: "bytes32" },
+          { name: "deadline", type: "uint256" },  // CHANGED: deadline instead of timestamp
+          { name: "nonce", type: "uint256" }
+        ]
+      };
+  
+      const message = {
+        orderId: orderId,
+        deliveryHash: proofHash,
+        deadline: deadline,  // CHANGED: deadline instead of timestamp
+        nonce: nonce
+      };
+  
+      // Sign the typed data
+      const signature = await this.signer.signTypedData(domain, types, message);
+      const sig = Signature.from(signature);
+  
+      this.logger.log(
+        `Submitting delivery proof for orderId ${orderId} with deadline ${deadline}, nonce ${nonce}`,
+      );
+  
+      // Call submitDeliveryProof on contract with NEW signature
+      const txResponse = await contract.submitDeliveryProof(
+        orderId,
+        proofHash,
+        proofURI || "",
+        deadline,  // ADDED: deadline parameter
+        sig.v,
+        sig.r,
+        sig.s,
+      ) as unknown as ContractTransactionResponse;
+  
+      // Wait for confirmation
+      const receipt = await txResponse.wait();
+      if (!receipt) {
+        throw new Error("Transaction receipt not received");
+      }
+  
+      this.logger.log(
+        `Delivery proof confirmed at block ${receipt.blockNumber} for orderId ${orderId}`,
+      );
+  
+      return { hash: txResponse.hash };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      this.logger.error(
+        `Failed to submit delivery proof for orderId ${orderId}: ${message}`,
+      );
+      throw new ApiException(
+        "contract_execution_failed",
+        `Failed to submit delivery proof: ${message}`,
+        500,
+      );
+    }
+  }
+
+  /**
+   * Execute settlement on the escrow contract.
+   * This transfers funds from escrow to the merchant's Ethereum address.
+   * 
+   * Note: For off-ramp settlements, the contract transfers to the merchant's address on-chain.
+   * The actual fiat destination is handled separately in the off-ramp processing.
+   * 
+   * @param contractAddress - Contract address
+   * @param orderId - Order ID
+   * @param merchantId - Merchant ID (to get merchant's Ethereum address from contract)
+   * @param offrampData - Optional offramp data (can contain fiat destination info)
+   */
+  async executeSettlement(
+    contractAddress: string,
+    orderId: bigint,
+    merchantId: string,
+    offrampData: string = "0x",
+  ): Promise<{ hash: string }> {
+    if (!this.signer || !contractAddress) {
+      throw new ApiException(
+        "contract_execution_failed",
+        "Cannot execute settlement: signer or contract address not available",
+        500,
+      );
+    }
+
+    try {
+      const contract = new Contract(
+        contractAddress,
+        DVPEscrowWithSettlementAbi,
+        this.signer,
+      ) as unknown as DvpEscrowContract;
+
+      // Get merchant's Ethereum address from contract
+      const contractMerchantId = await this.getContractMerchantId(merchantId);
+      const merchantOnChain = await contract.merchants(contractMerchantId);
+      const merchantAddress = merchantOnChain.merchantAddress;
+
+      if (!merchantAddress || merchantAddress === "0x0000000000000000000000000000000000000000") {
+        throw new ApiException(
+          "contract_execution_failed",
+          `Invalid merchant address from contract: ${merchantAddress}`,
+          500,
+        );
+      }
+
+      this.logger.log(
+        `Executing settlement for orderId ${orderId}, transferring to merchant address: ${merchantAddress}`,
+      );
+
+      const tx = await contract.executeSettlement(
+        orderId,
+        merchantAddress, // Use merchant's Ethereum address, not fiat destination
+        offrampData,
+      );
+
+      this.logger.log(
+        `Settlement execution transaction submitted: ${tx.hash} for orderId ${orderId}`,
+      );
+
+      return { hash: tx.hash };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      this.logger.error(
+        `Failed to execute settlement for orderId ${orderId}: ${message}`,
+      );
+      throw new ApiException(
+        "contract_execution_failed",
+        `Failed to execute settlement: ${message}`,
+        500,
+      );
+    }
+  }
+
+  /**
+   * Confirm settlement on the escrow contract.
+   * This is called after off-ramp processing is complete.
+   */
+  async confirmSettlement(
+    contractAddress: string,
+    orderId: bigint,
+    fiatTransactionHash: string,
+  ): Promise<{ hash: string }> {
+    if (!this.signer || !contractAddress) {
+      throw new ApiException(
+        "contract_execution_failed",
+        "Cannot confirm settlement: signer or contract address not available",
+        500,
+      );
+    }
+
+    try {
+      const contract = new Contract(
+        contractAddress,
+        DVPEscrowWithSettlementAbi,
+        this.signer,
+      ) as unknown as DvpEscrowContract;
+
+      const tx = await contract.confirmSettlement(orderId, fiatTransactionHash);
+
+      this.logger.log(
+        `Settlement confirmation transaction submitted: ${tx.hash} for orderId ${orderId}`,
+      );
+
+      return { hash: tx.hash };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      this.logger.error(
+        `Failed to confirm settlement for orderId ${orderId}: ${message}`,
+      );
+      throw new ApiException(
+        "contract_execution_failed",
+        `Failed to confirm settlement: ${message}`,
+        500,
+      );
+    }
+  }
+
+  /**
+   * Get merchant balance from the escrow contract.
+   */
+  async getMerchantBalance(
+    contractAddress: string,
+    merchantAddress: string,
+    tokenAddress: string,
+  ): Promise<bigint> {
+    if (!this.provider || !contractAddress) {
+      return BigInt(0);
+    }
+
+    try {
+      const contract = new Contract(
+        contractAddress,
+        DVPEscrowWithSettlementAbi,
+        this.provider,
+      ) as any;
+
+      const balance = await contract.merchantBalances(merchantAddress, tokenAddress);
+      return balance;
+    } catch (err) {
+      this.logger.error(
+        `Failed to get merchant balance for ${merchantAddress}: ${err instanceof Error ? err.message : "Unknown error"}`,
+      );
+      return BigInt(0);
+    }
   }
 
   /**

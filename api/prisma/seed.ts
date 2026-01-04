@@ -1,8 +1,12 @@
 import { PrismaClient } from '@prisma/client';
 import dotenv from 'dotenv';
+import { registerMerchantOnChain } from '../src/modules/auth/utils/merchant-registration.util';
 dotenv.config();
 
 const prisma = new PrismaClient();
+
+// Default merchant address for all merchants (for hackathon/demo)
+const DEFAULT_MERCHANT_ADDRESS = '0x5D478B369769183F05b70bb7a609751c419b4c04';
 
 /**
  * Generate a random API key with the given prefix.
@@ -21,6 +25,19 @@ async function main() {
   // Get contract addresses from environment variables (fallback for merchants without specific addresses)
   const defaultDvpAddress = process.env.DvP_CONTRACT_ADDRESS || null;
   const defaultConsentedPullAddress = process.env.CONSENTED_PULL_CONTRACT_ADDRESS || null;
+
+  // Check if merchant registration should be done on-chain
+  const shouldRegisterOnChain = !!(
+    process.env.DvP_CONTRACT_ADDRESS &&
+    process.env.PRIVATE_KEY &&
+    process.env.SEPOLIA_RPC_URL
+  );
+
+  if (shouldRegisterOnChain) {
+    console.log('📝 Merchant on-chain registration is enabled');
+  } else {
+    console.log('⚠️  Merchant on-chain registration is disabled (set DvP_CONTRACT_ADDRESS, PRIVATE_KEY, SEPOLIA_RPC_URL to enable)');
+  }
 
   // Hackathon merchants (4-5 merchants)
   // Each merchant can have their own contract addresses, or use env vars as fallback
@@ -69,6 +86,8 @@ async function main() {
 
   const allMerchants = [...hackathonMerchants, testMerchant, liveMerchant];
 
+  let merchantCounter = 1; // Start merchant IDs from 1
+
   for (const merchantData of allMerchants) {
     const apiKey = generateApiKey(merchantData.apiKeyPrefix);
 
@@ -82,6 +101,8 @@ async function main() {
       const existingWithContracts = existing as unknown as {
         dvpContractAddress: string | null;
         consentedPullContractAddress: string | null;
+        contractMerchantId: string | null;
+        merchantAddress: string | null;
       };
       if (
         existingWithContracts.dvpContractAddress !== merchantData.dvpContractAddress ||
@@ -92,11 +113,54 @@ async function main() {
           data: {
             dvpContractAddress: merchantData.dvpContractAddress,
             consentedPullContractAddress: merchantData.consentedPullContractAddress,
+            // Use existing contractMerchantId and merchantAddress if they exist
+            contractMerchantId: existingWithContracts.contractMerchantId || merchantCounter.toString(),
+            merchantAddress: existingWithContracts.merchantAddress || DEFAULT_MERCHANT_ADDRESS,
           } as any, // Type assertion needed until Prisma Client is regenerated
         });
         console.log(`  → Updated contract addresses for "${merchantData.name}"`);
       }
+      // Increment counter even for existing merchants to keep IDs consistent
+      if (!existingWithContracts.contractMerchantId) {
+        merchantCounter++;
+      } else {
+        merchantCounter++;
+      }
       continue;
+    }
+
+    // Generate merchant ID for contract (sequential starting from 1)
+    const contractMerchantId = merchantCounter.toString();
+    merchantCounter++;
+
+    // Use default merchant address for all merchants
+    const merchantAddress = DEFAULT_MERCHANT_ADDRESS;
+
+    // Register merchant on-chain if enabled
+    let registrationResult = null;
+    if (shouldRegisterOnChain && merchantData.dvpContractAddress) {
+      try {
+        registrationResult = await registerMerchantOnChain(
+          {
+            contractAddress: merchantData.dvpContractAddress,
+            privateKey: process.env.PRIVATE_KEY!,
+            rpcUrl: process.env.SEPOLIA_RPC_URL!,
+          },
+          {
+            merchantId: contractMerchantId,
+            merchantAddress: merchantAddress,
+          },
+        );
+
+        if (registrationResult.success) {
+          console.log(`  ✓ Registered merchant "${merchantData.name}" on-chain (ID: ${contractMerchantId}, TX: ${registrationResult.transactionHash})`);
+        } else {
+          console.log(`  ⚠️  Failed to register merchant "${merchantData.name}" on-chain: ${registrationResult.error}`);
+        }
+      } catch (error) {
+        console.error(`  ❌ Error registering merchant "${merchantData.name}" on-chain:`, error);
+        registrationResult = { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+      }
     }
 
     const created = await prisma.merchant.upsert({
@@ -104,6 +168,8 @@ async function main() {
       update: {
         dvpContractAddress: merchantData.dvpContractAddress,
         consentedPullContractAddress: merchantData.consentedPullContractAddress,
+        contractMerchantId: contractMerchantId,
+        merchantAddress: merchantAddress,
       } as any, // Type assertion needed until Prisma Client is regenerated
       create: {
         name: merchantData.name,
@@ -111,10 +177,14 @@ async function main() {
         isActive: true,
         dvpContractAddress: merchantData.dvpContractAddress,
         consentedPullContractAddress: merchantData.consentedPullContractAddress,
+        contractMerchantId: contractMerchantId,
+        merchantAddress: merchantAddress,
       } as any, // Type assertion needed until Prisma Client is regenerated
     });
 
     console.log(`✓ Created merchant "${created.name}" with API key: ${created.apiKey}`);
+    console.log(`  → Contract Merchant ID: ${contractMerchantId}`);
+    console.log(`  → Merchant Address: ${merchantAddress}`);
   }
 
   // Create fiat accounts for all merchants
@@ -167,7 +237,14 @@ async function main() {
   console.log('\n✅ Seeding complete!');
   console.log('\n📋 Merchant API Keys:');
   existingMerchants.forEach((m) => {
-    console.log(`  - ${m.name}: ${m.apiKey}`);
+    const merchantWithContracts = m as unknown as {
+      contractMerchantId: string | null;
+      merchantAddress: string | null;
+    };
+    const contractInfo = merchantWithContracts.contractMerchantId 
+      ? ` (Contract ID: ${merchantWithContracts.contractMerchantId}, Address: ${merchantWithContracts.merchantAddress || DEFAULT_MERCHANT_ADDRESS})`
+      : '';
+    console.log(`  - ${m.name}: ${m.apiKey}${contractInfo}`);
   });
 }
 
@@ -179,4 +256,3 @@ main()
   .finally(async () => {
     await prisma.$disconnect();
   });
-

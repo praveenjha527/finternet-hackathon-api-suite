@@ -149,10 +149,10 @@ export class ProgrammablePaymentQueueService {
       } as DeliveryProofProcessJobData,
       {
         delay: delayMs ?? 0,
-        attempts: 3,
+        attempts: 10, // More attempts to allow waiting for contract status updates after delivery proof submission
         backoff: {
           type: "exponential",
-          delay: 5000,
+          delay: 10000, // Start with 10 second delay, exponential backoff
         },
         removeOnComplete: {
           age: 86400,

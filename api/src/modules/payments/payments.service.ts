@@ -55,6 +55,17 @@ export class PaymentsService {
   }
 
   /**
+   * Update payment intent with transaction hash (public endpoint).
+   * Called by frontend after contract execution.
+   */
+  async updateTransactionHash(
+    intentId: string,
+    transactionHash: string,
+  ): Promise<PaymentIntentEntity> {
+    return this.intentService.updateTransactionHash(intentId, transactionHash);
+  }
+
+  /**
    * Get escrow order for a payment intent
    */
   async getEscrowOrder(intentId: string, merchantId: string) {

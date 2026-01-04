@@ -7,6 +7,28 @@ export const ConsentedPullAbi = ConsentedPullArtifact.abi;
 
 // Type definitions for DVPEscrowWithSettlement contract
 export type DvpEscrowContract = {
+  initializeMerchant: (
+    merchantId: bigint,
+    merchantAddress: string,
+    signatureDeadline: bigint,
+    v: number,
+    r: string,
+    s: string,
+  ) => Promise<{ hash: string }>;
+  
+  merchants: (merchantId: bigint) => Promise<{
+    merchantAddress: string;
+    isActive: boolean;
+    isKybVerified: boolean;
+    totalOrders: bigint;
+    successfulDeliveries: bigint;
+    disputes: bigint;
+  }>;
+  
+  merchantNonce: (merchantId: bigint) => Promise<bigint>;
+  
+  deliveryOracleNonce: (orderId: bigint) => Promise<bigint>;
+  
   createOrder: (
     merchantId: bigint,
     orderId: bigint,
@@ -23,6 +45,7 @@ export type DvpEscrowContract = {
     orderId: bigint,
     proofHash: string,
     proofURI: string,
+    deadline: bigint,
     v: number,
     r: string,
     s: string,
@@ -32,6 +55,11 @@ export type DvpEscrowContract = {
     orderId: bigint,
     offrampDestination: string,
     offrampData: string,
+  ) => Promise<{ hash: string }>;
+  
+  confirmSettlement: (
+    orderId: bigint,
+    fiatTransactionHash: string,
   ) => Promise<{ hash: string }>;
   
   markShipped: (orderId: bigint) => Promise<{ hash: string }>;

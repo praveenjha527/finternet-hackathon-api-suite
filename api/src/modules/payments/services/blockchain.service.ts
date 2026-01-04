@@ -61,6 +61,14 @@ export class BlockchainService {
     return this.chainId;
   }
 
+  getSigner(): Wallet | null {
+    return this.signer;
+  }
+
+  getProvider(): JsonRpcProvider | null {
+    return this.provider;
+  }
+
   /**
    * Create an order in the escrow contract (new escrow-based flow).
    * 
@@ -223,6 +231,45 @@ export class BlockchainService {
     }
   }
 
+  /**
+   * Get transaction receipt status.
+   * Returns 'pending' if receipt doesn't exist yet, 'success' if transaction succeeded, 'failed' if it reverted.
+   */
+  async getTransactionReceiptStatus(txHash: string): Promise<'pending' | 'success' | 'failed'> {
+    if (!this.provider) {
+      // Mock mode: assume success immediately
+      return 'success';
+    }
+
+    try {
+      const receipt = await this.provider.getTransactionReceipt(txHash);
+      
+      // If receipt is null, transaction is still pending
+      if (!receipt) {
+        return 'pending';
+      }
+
+      // receipt.status === 1 means success, receipt.status === 0 means failed/reverted
+      // In ethers v6, status is a number: 1 for success, 0 for failure
+      if (receipt.status === 1) {
+        return 'success';
+      } else if (receipt.status === 0) {
+        return 'failed';
+      } else {
+        // Unknown status, treat as pending
+        return 'pending';
+      }
+    } catch (error) {
+      // If there's an error fetching receipt, assume pending
+      // This could happen if the transaction hash is invalid or network issues
+      return 'pending';
+    }
+  }
+
+  /**
+   * @deprecated Use getTransactionReceiptStatus instead
+   * Kept for backward compatibility
+   */
   async getConfirmations(txHash: string): Promise<number> {
     if (!this.provider) return 5; // mock: immediately confirmed
 
