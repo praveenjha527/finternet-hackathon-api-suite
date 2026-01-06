@@ -205,7 +205,8 @@ export class EscrowOrderService {
       try {
         const orderId = BigInt(escrowOrder.orderId);
         
-        // Check order status before submitting - contract requires Created (0) or InTransit (1)
+        // Check order status before submitting - contract requires Created (0) to submit delivery proof
+        // Lifecycle: Created (0) → Delivered (2) → AwaitingSettlement (3) → Completed (4)
         const orderState = await this.escrow.getOrderState(
           escrowOrder.contractAddress,
           orderId,
@@ -215,17 +216,19 @@ export class EscrowOrderService {
           throw new Error(`Order state not found for orderId ${orderId}`);
         }
         
-        // Contract requires status to be Created (0) or InTransit (1) to submit delivery proof
-        if (orderState.status !== 0 && orderState.status !== 1) {
+        // Contract requires status to be Created (0) to submit delivery proof
+        // Delivery proof submission transitions order from Created (0) to Delivered (2)
+        const orderStatusNum = Number(orderState.status);
+        if (orderStatusNum !== 0) {
           throw new ApiException(
             "invalid_status",
-            `Cannot submit delivery proof: order status is ${orderState.status}, must be Created (0) or InTransit (1)`,
+            `Cannot submit delivery proof: order status is ${orderStatusNum}, must be Created (0). Order lifecycle: Created (0) → Delivered (2) → AwaitingSettlement (3) → Completed (4)`,
             400,
           );
         }
         
         this.logger.log(
-          `Order status is ${orderState.status} (Created/InTransit), proceeding with delivery proof submission`,
+          `Order status is ${orderStatusNum} (Created), proceeding with delivery proof submission`,
         );
         
         const result = await this.escrow.submitDeliveryProof(
