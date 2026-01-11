@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Param, Post } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Param, Post, ValidationPipe } from "@nestjs/common";
 import { ApiParam, ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { PaymentsService } from "./payments.service";
 import type { ApiResponse } from "../../common/responses";
@@ -9,6 +9,7 @@ import { RaiseDisputeDto } from "./dto/raise-dispute.dto";
 import { CreateMilestoneDto } from "./dto/create-milestone.dto";
 import { CompleteMilestoneDto } from "./dto/complete-milestone.dto";
 import { UpdateTransactionHashDto } from "./dto/update-transaction-hash.dto";
+import { ProcessPaymentDto } from "./dto/process-payment.dto";
 import type { PaymentIntentEntity } from "./entities/payment-intent.entity";
 import { CurrentMerchant } from "../auth/decorators/current-merchant.decorator";
 import { Public } from "../auth/guards/api-key.guard";
@@ -83,6 +84,33 @@ export class PaymentsController {
     const intent = await this.paymentsService.updateTransactionHash(
       intentId,
       dto.transactionHash,
+    );
+    return {
+      id: intent.id,
+      object: "payment_intent",
+      status: intent.status,
+      data: intent,
+      created: intent.created,
+      updated: intent.updated,
+    };
+  }
+
+  /**
+   * Public endpoint for processing payment with card details (Web2 payment).
+   * This endpoint does not require API key authentication.
+   * User submits card details, payment is processed, then on-ramp and escrow are created.
+   */
+  @Public()
+  @ApiParam({ name: "intentId" })
+  @Post("public/:intentId/payment")
+  @HttpCode(200)
+  async processPayment(
+    @Param("intentId") intentId: string,
+    @Body(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: false, transform: true })) dto: ProcessPaymentDto,
+  ): Promise<ApiResponse<PaymentIntentEntity>> {
+    const intent = await this.paymentsService.processPayment(
+      intentId,
+      dto,
     );
     return {
       id: intent.id,

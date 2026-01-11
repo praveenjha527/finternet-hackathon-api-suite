@@ -355,9 +355,14 @@ export class IntentService {
 
     // If status is INITIATED, update to PROCESSING since we have a transaction hash
     // This handles the case where the frontend posts transaction hash before calling confirmIntent
-    if (existing.status === PaymentIntentStatus.INITIATED) {
+    // If status is INITIATED or PAYMENT_CONFIRMED and we have a transaction hash, transition to PROCESSING
+    if (
+      existing.status === PaymentIntentStatus.INITIATED ||
+      existing.status === PaymentIntentStatus.PAYMENT_CONFIRMED
+    ) {
+      const currentStatus = existing.status === PaymentIntentStatus.INITIATED ? "INITIATED" : "PAYMENT_CONFIRMED";
       this.logger.log(
-        `Payment intent ${intentId} is INITIATED but has transaction hash - updating to PROCESSING`,
+        `Payment intent ${intentId} is ${currentStatus} but has transaction hash - updating to PROCESSING`,
       );
       updateData.status = PaymentIntentStatus.PROCESSING;
       

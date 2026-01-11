@@ -126,6 +126,59 @@ export class ApiClient {
       throw err;
     }
   }
+
+  /**
+   * Process payment with card details (public endpoint, no API key required)
+   */
+  async processPayment(
+    intentId: string,
+    cardDetails: {
+      cardNumber: string;
+      expiry: string;
+      cvv: string;
+      name: string;
+      addressLine1?: string;
+      addressLine2?: string;
+      city?: string;
+      state?: string;
+      zipCode?: string;
+      country?: string;
+    },
+  ): Promise<PaymentIntentEntity> {
+    try {
+      const response = await axios.post<ApiResponse<PaymentIntentEntity>>(
+        `${this.baseURL}/payment-intents/public/${intentId}/payment`,
+        { card: cardDetails },
+      );
+      
+      // Check for error response
+      if (response.data.error) {
+        throw new Error(response.data.error.message || 'Payment processing failed');
+      }
+      
+      // Validate response structure
+      if (!response.data || !response.data.data) {
+        console.error('Invalid API response structure:', response.data);
+        throw new Error('Invalid response from server');
+      }
+      
+      return response.data.data;
+    } catch (err) {
+      if (axios.isAxiosError(err)) {
+        if (err.response?.status === 404) {
+          throw new Error('Payment intent not found');
+        }
+        if (err.response?.data?.error?.message) {
+          throw new Error(err.response.data.error.message);
+        }
+        if (err.response?.data?.message) {
+          throw new Error(err.response.data.message);
+        }
+        throw new Error(`Payment processing failed: ${err.message}`);
+      }
+      throw err;
+    }
+  }
 }
 
 export const apiClient = new ApiClient();

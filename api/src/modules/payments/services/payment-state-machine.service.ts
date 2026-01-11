@@ -23,6 +23,7 @@ export class PaymentStateMachineService {
       PaymentIntentStatus.INITIATED,
       [
         PaymentIntentStatus.REQUIRES_SIGNATURE,
+        PaymentIntentStatus.PAYMENT_CONFIRMED,
         PaymentIntentStatus.PROCESSING,
         PaymentIntentStatus.CANCELED,
       ],
@@ -30,6 +31,14 @@ export class PaymentStateMachineService {
     [
       PaymentIntentStatus.REQUIRES_SIGNATURE,
       [PaymentIntentStatus.PROCESSING, PaymentIntentStatus.CANCELED],
+    ],
+    [
+      PaymentIntentStatus.PAYMENT_CONFIRMED,
+      [
+        PaymentIntentStatus.PROCESSING,
+        PaymentIntentStatus.CANCELED,
+        PaymentIntentStatus.REQUIRES_ACTION,
+      ],
     ],
     [
       PaymentIntentStatus.PROCESSING,

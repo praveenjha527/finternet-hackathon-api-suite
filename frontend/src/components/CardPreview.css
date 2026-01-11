@@ -1,0 +1,600 @@
+.card-preview {
+  perspective: 1000px;
+  margin-bottom: 2rem;
+  height: 220px;
+  position: relative;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.card-preview:focus {
+  outline: none;
+}
+
+.card-preview:focus-visible {
+  outline: 2px solid #635bff;
+  outline-offset: 4px;
+  border-radius: 20px;
+}
+
+.card-preview:hover:not(.flipped) .card-inner {
+  transform: translateY(-8px) scale(1.02);
+}
+
+.card-preview.flipped:hover .card-inner {
+  transform: rotateY(180deg) translateY(-8px) scale(1.02);
+}
+
+.card-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transition: transform 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  transform-style: preserve-3d;
+}
+
+.card-preview.flipped .card-inner {
+  transform: rotateY(180deg);
+}
+
+.card-front,
+.card-back {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  backface-visibility: hidden;
+  border-radius: 16px;
+  padding: 1.75rem;
+  box-shadow: 
+    0 10px 30px rgba(0, 0, 0, 0.2),
+    0 1px 8px rgba(0, 0, 0, 0.15),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+}
+
+.card-back {
+  transform: rotateY(180deg);
+  background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+}
+
+.card-back-stripes {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 40px;
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.05),
+    rgba(255, 255, 255, 0.05) 10px,
+    transparent 10px,
+    transparent 20px
+  );
+  opacity: 0.6;
+}
+
+.card-magnetic-stripe {
+  position: absolute;
+  top: 2rem;
+  left: 0;
+  right: 0;
+  height: 52px;
+  background: linear-gradient(
+    to bottom,
+    #1a1a1a 0%,
+    #000000 50%,
+    #1a1a1a 100%
+  );
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+.card-preview.visa .card-front,
+.card-preview.visa .card-back {
+  background: linear-gradient(135deg, #1434CB 0%, #1a42e8 100%);
+}
+
+.card-preview.mastercard .card-front,
+.card-preview.mastercard .card-back {
+  background: linear-gradient(135deg, #000000 0%, #1a1a1a 100%);
+}
+
+.card-preview.amex .card-front,
+.card-preview.amex .card-back {
+  background: linear-gradient(135deg, #006FCF 0%, #0052a3 100%);
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: auto;
+}
+
+.card-chip {
+  width: 54px;
+  height: 42px;
+  background: linear-gradient(135deg, #FFD700 0%, #FFA500 100%);
+  border-radius: 8px;
+  position: relative;
+  box-shadow: 
+    0 4px 8px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.2);
+  overflow: hidden;
+}
+
+.card-chip::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 50%;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.3), transparent);
+  border-radius: 8px 8px 0 0;
+}
+
+.chip-line {
+  position: absolute;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 1px;
+}
+
+.chip-line:nth-child(1) {
+  top: 10px;
+  left: 10px;
+  width: 34px;
+  height: 2.5px;
+}
+
+.chip-line:nth-child(2) {
+  top: 16px;
+  left: 10px;
+  width: 34px;
+  height: 2.5px;
+}
+
+.chip-line:nth-child(3) {
+  top: 22px;
+  left: 10px;
+  width: 34px;
+  height: 2.5px;
+}
+
+.chip-line:nth-child(4) {
+  top: 28px;
+  left: 10px;
+  width: 34px;
+  height: 2.5px;
+}
+
+.card-brand {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.card-logo {
+  width: 60px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.card-logo.visa {
+  width: 70px;
+  height: 44px;
+  background: transparent;
+  border-radius: 4px;
+  padding: 0.25rem;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.card-logo.visa img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.visa-text {
+  color: #ffffff;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 0.125em;
+  font-family: 'Helvetica Neue', Arial, sans-serif;
+  line-height: 1;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.card-logo.amex {
+  width: 70px;
+  height: 44px;
+  background: transparent;
+  border-radius: 4px;
+  padding: 0.375rem;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.card-logo.amex img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.amex-text {
+  color: #ffffff;
+  font-size: 0.875rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  font-family: 'Helvetica Neue', Arial, sans-serif;
+  line-height: 1;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.card-logo.mastercard {
+  position: relative;
+  width: 60px;
+  height: 40px;
+}
+
+.mc-circle {
+  position: absolute;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.mc-circle-1 {
+  left: 0;
+  background: #EB001B;
+}
+
+.mc-circle-2 {
+  right: 0;
+  background: #F79E1B;
+}
+
+.card-brand-placeholder {
+  width: 60px;
+  height: 40px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+.card-number {
+  font-size: 1.625rem;
+  font-weight: 500;
+  color: #ffffff;
+  letter-spacing: 0.125em;
+  font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
+  margin: 2rem 0;
+  text-shadow: 
+    0 2px 4px rgba(0, 0, 0, 0.3),
+    0 1px 0 rgba(255, 255, 255, 0.1);
+  line-height: 1.2;
+}
+
+.card-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-top: auto;
+}
+
+.card-name {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: #ffffff;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.card-expiry {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: #ffffff;
+  letter-spacing: 0.1em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.card-hologram {
+  position: absolute;
+  top: 1.25rem;
+  right: 1.25rem;
+  width: 48px;
+  height: 36px;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.4) 0%,
+    rgba(255, 255, 255, 0.1) 30%,
+    rgba(255, 255, 255, 0.3) 60%,
+    rgba(255, 255, 255, 0.1) 100%
+  );
+  border-radius: 6px;
+  opacity: 0.7;
+  box-shadow: 
+    0 2px 8px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  animation: hologramShine 4s ease-in-out infinite;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+@keyframes hologramShine {
+  0%, 100% {
+    opacity: 0.6;
+    transform: scale(1) rotate(0deg);
+  }
+  25% {
+    opacity: 0.85;
+    transform: scale(1.03) rotate(2deg);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.05) rotate(0deg);
+  }
+  75% {
+    opacity: 0.85;
+    transform: scale(1.03) rotate(-2deg);
+  }
+}
+
+.card-back-content {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  z-index: 1;
+}
+
+.card-back-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 5rem; /* Push down below the magnetic stripe */
+  padding: 0 1.5rem;
+}
+
+.card-signature-strip {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.signature-label {
+  font-size: 0.5rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.8);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-left: 0.25rem;
+}
+
+.signature-box {
+  background: repeating-linear-gradient(
+    90deg,
+    #ffffff 0%,
+    #ffffff 98%,
+    rgba(0, 0, 0, 0.05) 98%,
+    rgba(0, 0, 0, 0.05) 100%
+  );
+  background-size: 20px 100%;
+  height: 32px;
+  border-radius: 4px;
+  padding: 0.25rem 0.5rem;
+  display: flex;
+  align-items: center;
+  position: relative;
+  overflow: hidden;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);
+}
+
+.signature-box::before {
+  content: 'AUTHORIZED SIGNATURE';
+  position: absolute;
+  font-size: 0.4rem;
+  color: rgba(0, 0, 0, 0.2);
+  letter-spacing: 0.05em;
+  top: 50%;
+  left: 0.5rem;
+  transform: translateY(-50%);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.signature-text {
+  font-size: 0.875rem;
+  font-family: 'Brush Script MT', cursive;
+  color: #000;
+  position: relative;
+  z-index: 2;
+  line-height: 1;
+}
+
+.card-cvv-container {
+  background: #fff;
+  border-radius: 4px;
+  padding: 0.25rem 0.5rem;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  position: relative;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+  margin-top: 1rem; /* Align visual baseline with signature box roughly */
+}
+
+/* Label for CVV can be outside or styled differently if needed, keeping it simple inside or above */
+.card-cvv-label {
+  position: absolute;
+  top: -12px;
+  right: 0;
+  font-size: 0.5rem;
+  color: rgba(255, 255, 255, 0.8);
+  font-weight: 600;
+}
+
+.card-cvv {
+  font-family: 'Courier New', monospace;
+  font-size: 0.9rem;
+  color: #000;
+  font-weight: bold;
+}
+
+.card-brand-back {
+  position: absolute;
+  bottom: 1rem;
+  right: 1.5rem;
+  z-index: 10;
+}
+
+.card-logo-back {
+  width: 50px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.8;
+}
+
+.card-logo-back.visa img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  /* Ensure Visa logo is white on the back as well for visibility */
+  filter: brightness(0) invert(1);
+}
+
+.card-logo.visa img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  /* Fix Mixed Logo: Make it white to stand out against the blue background */
+  filter: brightness(0) invert(1);
+}
+
+.visa-text-back {
+  color: #fff;
+  font-size: 1.25rem;
+  font-weight: bold;
+  font-style: italic;
+}
+
+.card-logo-back.mastercard img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.mc-circle-back {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0.8;
+}
+
+.mc-circle-back.mc-circle-1 {
+  left: 0;
+  background: #EB001B;
+}
+
+.mc-circle-back.mc-circle-2 {
+  right: 0;
+  background: #F79E1B;
+}
+
+/* Adjustments for smaller screens if necessary */
+@media (max-width: 640px) {
+  .card-back-row {
+    margin-top: 4rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .card-preview {
+    height: 200px;
+  }
+
+  .card-front,
+  .card-back {
+    padding: 1.5rem;
+    border-radius: 14px;
+  }
+
+  .card-number {
+    font-size: 1.375rem;
+    margin: 1.5rem 0;
+    letter-spacing: 0.1em;
+  }
+
+  .card-chip {
+    width: 48px;
+    height: 36px;
+  }
+
+  .chip-line:nth-child(1) {
+    top: 9px;
+    width: 30px;
+  }
+
+  .chip-line:nth-child(2) {
+    top: 15px;
+    width: 30px;
+  }
+
+  .chip-line:nth-child(3) {
+    top: 21px;
+    width: 30px;
+  }
+
+  .chip-line:nth-child(4) {
+    top: 27px;
+    width: 30px;
+  }
+
+  .card-logo {
+    width: 50px;
+    height: 34px;
+  }
+
+  .card-hologram {
+    width: 40px;
+    height: 30px;
+    top: 1rem;
+    right: 1rem;
+  }
+}
