@@ -51,21 +51,34 @@ export class OnRampService {
     // In production, this would integrate with on-ramp providers
     await this.simulateOnRampDelay();
 
-    // For mocked version: 1:1 exchange rate
-    // In production, this would fetch real-time exchange rates
-    const exchangeRate = "1.0"; // 1 USD = 1 USDC (mocked)
+    // Exchange rate is intentionally small so we can mint a large stablecoin balance.
+    // Override via ONRAMP_EXCHANGE_RATE if needed (e.g. 0.000001).
+    const exchangeRateEnv = process.env.ONRAMP_EXCHANGE_RATE || "0.000001";
+    const exchangeRateValue = Number(exchangeRateEnv);
+    const exchangeRateNumber =
+      Number.isFinite(exchangeRateValue) && exchangeRateValue > 0
+        ? exchangeRateValue
+        : 0.000001;
+    const exchangeRate = exchangeRateNumber.toString();
+
+    // Stablecoin amount is fiat amount divided by the exchange rate.
+    const fiatAmountNumber = Number(fiatAmount);
+    const stablecoinAmountValue = Number.isNaN(fiatAmountNumber)
+      ? 0
+      : fiatAmountNumber / exchangeRateNumber;
+    const stablecoinAmount = stablecoinAmountValue.toFixed(6);
 
     // Generate mock transaction ID (on-ramp provider format)
     const transactionId = `onramp_${uuidv4().replace(/-/g, "")}`;
 
     this.logger.log(
-      `On-ramp completed: ${fiatAmount} ${fiatCurrency} → ${fiatAmount} ${stablecoinCurrency}, txId: ${transactionId}`,
+      `On-ramp completed: ${fiatAmount} ${fiatCurrency} → ${stablecoinAmount} ${stablecoinCurrency} @ ${exchangeRate}, txId: ${transactionId}`,
     );
 
     return {
       success: true,
       transactionId,
-      stablecoinAmount: fiatAmount, // 1:1 for mocked
+      stablecoinAmount,
       stablecoinCurrency,
       fiatAmount,
       fiatCurrency,
@@ -98,6 +111,6 @@ export class OnRampService {
   ): Promise<string> {
     // Mocked: 1:1 exchange rate
     // In production, fetch from provider API
-    return "1.0";
+    return "0.00001";
   }
 }
