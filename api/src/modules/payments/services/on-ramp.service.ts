@@ -13,6 +13,16 @@ export interface OnRampResult {
   error?: string;
 }
 
+function formatStablecoinAmount(value: bigint, decimals: number): string {
+  const sign = value < 0n ? "-" : "";
+  const absoluteValue = value < 0n ? -value : value;
+  const factor = 10n ** BigInt(decimals);
+  const whole = absoluteValue / factor;
+  const fraction = absoluteValue % factor;
+  const fractionString = fraction.toString().padStart(decimals, "0");
+  return `${sign}${whole.toString()}.${fractionString}`;
+}
+
 /**
  * OnRampService
  * 
@@ -51,22 +61,45 @@ export class OnRampService {
     // In production, this would integrate with on-ramp providers
     await this.simulateOnRampDelay();
 
-    // Exchange rate is intentionally small so we can mint a large stablecoin balance.
-    // Override via ONRAMP_EXCHANGE_RATE if needed (e.g. 0.000001).
-    const exchangeRateEnv = process.env.ONRAMP_EXCHANGE_RATE || "0.000001";
+    // Exchange rate defaults to 1:1 so small fiat amounts stay manageable.
+    // Override via ONRAMP_EXCHANGE_RATE to simulate different ratios.
+    const exchangeRateEnv = process.env.ONRAMP_EXCHANGE_RATE || "1";
     const exchangeRateValue = Number(exchangeRateEnv);
     const exchangeRateNumber =
       Number.isFinite(exchangeRateValue) && exchangeRateValue > 0
         ? exchangeRateValue
-        : 0.000001;
+        : 1;
     const exchangeRate = exchangeRateNumber.toString();
 
     // Stablecoin amount is fiat amount divided by the exchange rate.
     const fiatAmountNumber = Number(fiatAmount);
-    const stablecoinAmountValue = Number.isNaN(fiatAmountNumber)
+    let stablecoinAmountValue = Number.isNaN(fiatAmountNumber)
       ? 0
       : fiatAmountNumber / exchangeRateNumber;
-    const stablecoinAmount = stablecoinAmountValue.toFixed(6);
+
+    const hackathonMode =
+      process.env.ONRAMP_HACKATHON_MODE?.toLowerCase() === "true";
+    if (hackathonMode) {
+      stablecoinAmountValue = 0.0001;
+    } else {
+      const forcedStablecoinAmount =
+        typeof process.env.ONRAMP_FIXED_USDC_AMOUNT === "string"
+          ? Number(process.env.ONRAMP_FIXED_USDC_AMOUNT)
+          : NaN;
+      if (Number.isFinite(forcedStablecoinAmount) && forcedStablecoinAmount > 0) {
+        stablecoinAmountValue = forcedStablecoinAmount;
+      }
+    }
+    const USDC_DECIMALS = 6;
+    const multiplier = 10 ** USDC_DECIMALS;
+    const scaledStablecoinAmount =
+      Number.isFinite(stablecoinAmountValue) && !Number.isNaN(stablecoinAmountValue)
+        ? BigInt(Math.round(stablecoinAmountValue * multiplier))
+        : 0n;
+    const stablecoinAmount = formatStablecoinAmount(
+      scaledStablecoinAmount,
+      USDC_DECIMALS,
+    );
 
     // Generate mock transaction ID (on-ramp provider format)
     const transactionId = `onramp_${uuidv4().replace(/-/g, "")}`;
