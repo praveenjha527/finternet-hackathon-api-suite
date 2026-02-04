@@ -7,6 +7,8 @@ import { PaymentEventService } from "../services/payment-event.service";
 import { EscrowService } from "../services/escrow.service";
 import { LedgerService } from "../services/ledger.service";
 import { SettlementQueueService } from "./settlement-queue.service";
+import { PaymentStateMachineService } from "../services/payment-state-machine.service";
+import { PaymentIntentStatus } from "../entities/payment-intent.entity";
 
 export interface TimeLockReleaseJobData {
   type: "TIME_LOCK_RELEASE";
@@ -59,6 +61,7 @@ export class ProgrammablePaymentQueueProcessor extends WorkerHost {
     private readonly escrow: EscrowService,
     private readonly ledger: LedgerService,
     private readonly settlementQueue: SettlementQueueService,
+    private readonly stateMachine: PaymentStateMachineService,
   ) {
     super();
     this.logger.log("ProgrammablePaymentQueueProcessor initialized and ready to process jobs");
@@ -83,6 +86,42 @@ export class ProgrammablePaymentQueueProcessor extends WorkerHost {
       default:
         this.logger.error(`Unknown job type: ${(job.data as any).type}`);
         throw new Error(`Unknown programmable payment job type: ${(job.data as any).type}`);
+    }
+  }
+
+  /**
+   * Transition payment intent to success state (SUCCEEDED) when delivery proof or milestone is released.
+   */
+  private async transitionPaymentIntentToSuccess(
+    paymentIntentId: string,
+    merchantId: string,
+    reason: string,
+  ): Promise<void> {
+    try {
+      const intent = await this.prisma.paymentIntent.findUnique({
+        where: { id: paymentIntentId },
+      });
+      if (!intent) return;
+      const currentStatus = intent.status as PaymentIntentStatus;
+      if (
+        currentStatus === PaymentIntentStatus.SUCCEEDED ||
+        currentStatus === PaymentIntentStatus.SETTLED ||
+        currentStatus === PaymentIntentStatus.FINAL
+      ) {
+        return;
+      }
+      this.stateMachine.transition(currentStatus, PaymentIntentStatus.SUCCEEDED, {
+        reason,
+      });
+      await this.prisma.paymentIntent.update({
+        where: { id: paymentIntentId },
+        data: { status: PaymentIntentStatus.SUCCEEDED },
+      });
+      this.logger.log(`Payment intent ${paymentIntentId} set to SUCCEEDED (${reason})`);
+    } catch (err) {
+      this.logger.warn(
+        `Could not transition payment intent ${paymentIntentId} to SUCCEEDED: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
@@ -356,6 +395,13 @@ export class ProgrammablePaymentQueueProcessor extends WorkerHost {
       );
     }
 
+    // Set payment intent to success state (SUCCEEDED)
+    await this.transitionPaymentIntentToSuccess(
+      paymentIntentId,
+      merchantId,
+      `milestone ${milestone.milestoneIndex} released`,
+    );
+
     // Enqueue settlement so payment intent can move to SETTLED (even if on-chain failed)
     if (settlementExecuted && escrowOrder.paymentIntent.settlementMethod === "OFF_RAMP_MOCK") {
       await this.settlementQueue.enqueueSettlement({
@@ -511,6 +557,13 @@ export class ProgrammablePaymentQueueProcessor extends WorkerHost {
         creditError instanceof Error ? creditError.message : String(creditError),
       );
     }
+
+    // Set payment intent to success state (SUCCEEDED)
+    await this.transitionPaymentIntentToSuccess(
+      paymentIntentId,
+      merchantId,
+      "delivery proof released",
+    );
 
     // Enqueue settlement job - it will update payment intent to SETTLED and handle off-ramp (even if on-chain failed)
     if (settlementExecuted && escrowOrder.paymentIntent.settlementMethod === "OFF_RAMP_MOCK") {
