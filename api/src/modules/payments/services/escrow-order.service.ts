@@ -14,7 +14,7 @@ export interface CreateEscrowOrderDto {
   deliveryPeriod: number;
   deliveryDeadline: string; // Unix timestamp (BigInt as string)
   expectedDeliveryHash?: string;
-  autoReleaseOnProof: boolean;
+  autoReleaseOnProof: boolean | string;
   deliveryOracle?: string;
   releaseType: "TIME_LOCKED" | "MILESTONE_LOCKED" | "DELIVERY_PROOF" | "AUTO_RELEASE";
   timeLockUntil?: string; // Unix timestamp for time locks
@@ -87,7 +87,8 @@ export class EscrowOrderService {
 
     // Coerce autoReleaseOnProof to boolean (may come as string "true"/"false" from metadata)
     const autoReleaseOnProof =
-      dto.autoReleaseOnProof === true || dto.autoReleaseOnProof === "true";
+      dto.autoReleaseOnProof === true ||
+      String(dto.autoReleaseOnProof).toLowerCase() === "true";
 
     // Create escrow order in database
     const escrowOrder = await this.prisma.escrowOrder.create({
