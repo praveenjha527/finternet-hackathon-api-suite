@@ -192,6 +192,13 @@ frontend/dist/
 frontend/dist-ssr/
 api/dist2/**/*
 
+# Temp Files 
+api/scripts/*.xlsx
+api/scripts/*.csv
+*.xlsx
+*.csv
+
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -202,3 +209,11 @@ api/dist2/**/*
 *.njsproj
 *.sln
 *.sw?
+
+# Documentation for internal use
+FINTERNET_HACKATHON_API_DOCS.md
+ARCHITECTURE_PROPOSAL.md
+PAYMENT_FLOW.md
+FRONTEND_PLAN.md
+PAYMENT_INTENT_STATUSES.md
+WEB2_PAYMENT_STATUS_BRAINSTORM.md

@@ -303,7 +303,13 @@ export class TransactionConfirmationQueueProcessor extends WorkerHost {
     }
 
     // Enqueue settlement job if settlement method is OFF_RAMP_MOCK
-    if (updated.settlementMethod === "OFF_RAMP_MOCK") {
+    // For DELIVERY_VS_PAYMENT, settlement is handled by programmable payment queue
+    // (after delivery proof, time lock, or milestone completion)
+    // For CONSENTED_PULL and other types, settlement happens immediately
+    if (
+      updated.settlementMethod === "OFF_RAMP_MOCK" &&
+      updated.type !== "DELIVERY_VS_PAYMENT"
+    ) {
       await this.settlementQueue.enqueueSettlement({
         paymentIntentId: updated.id,
         merchantId: (updated as any).merchantId,
@@ -313,6 +319,13 @@ export class TransactionConfirmationQueueProcessor extends WorkerHost {
         currency: updated.currency,
       });
       this.logger.log(`Settlement job enqueued for payment intent ${updated.id}`);
+    } else if (
+      updated.settlementMethod === "OFF_RAMP_MOCK" &&
+      updated.type === "DELIVERY_VS_PAYMENT"
+    ) {
+      this.logger.log(
+        `Skipping immediate settlement for DELIVERY_VS_PAYMENT payment intent ${updated.id}. Settlement will be handled by programmable payment queue after delivery proof, time lock, or milestone completion.`,
+      );
     }
 
     // Emit blockchain transaction confirmed event

@@ -16,6 +16,8 @@ import { EscrowService } from "./services/escrow.service";
 import { EscrowOrderService } from "./services/escrow-order.service";
 import { PaymentStateMachineService } from "./services/payment-state-machine.service";
 import { PaymentEventService } from "./services/payment-event.service";
+import { PaymentProcessorService } from "./services/payment-processor.service";
+import { OnRampService } from "./services/on-ramp.service";
 import { PaymentIntentEventListener } from "./listeners/payment-intent-event.listener";
 import { QueuesModule } from "./queues/queues.module";
 
@@ -39,6 +41,8 @@ import { QueuesModule } from "./queues/queues.module";
     ChargebackService,
     EscrowService,
     EscrowOrderService,
+    PaymentProcessorService,
+    OnRampService,
   ],
 })
 export class PaymentsModule {}

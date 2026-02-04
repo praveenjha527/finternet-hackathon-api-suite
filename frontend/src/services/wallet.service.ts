@@ -109,10 +109,7 @@ class MetaMaskWalletService implements WalletService {
 // Extend Window interface for TypeScript
 declare global {
   interface Window {
-    ethereum?: {
-      request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
-      send: (method: string, params?: unknown[]) => Promise<unknown>;
-    };
+    ethereum?: any;
   }
 }
 

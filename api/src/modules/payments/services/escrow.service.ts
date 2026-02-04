@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { Contract, JsonRpcProvider, Wallet, parseUnits, Signature, ContractTransactionResponse } from "ethers";
+import { Contract, JsonRpcProvider, Wallet, parseUnits, Signature, ContractTransactionResponse, MaxUint256 } from "ethers";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../../prisma/prisma.service";
 import { BlockchainService } from "./blockchain.service";
@@ -8,6 +8,15 @@ import {
   DVPEscrowWithSettlementAbi,
   DvpEscrowContract,
 } from "../../../contracts/types";
+
+// ERC20 ABI for token approval
+const ERC20_ABI = [
+  "function approve(address spender, uint256 amount) external returns (bool)",
+  "function allowance(address owner, address spender) external view returns (uint256)",
+  "function balanceOf(address account) external view returns (uint256)",
+  "function decimals() external view returns (uint8)",
+  "function transfer(address to, uint256 amount) external returns (bool)",
+] as const;
 
 /**
  * EscrowService
@@ -465,6 +474,164 @@ export class EscrowService {
         `Failed to get merchant balance for ${merchantAddress}: ${err instanceof Error ? err.message : "Unknown error"}`,
       );
       return BigInt(0);
+    }
+  }
+
+  /**
+   * Approve ERC20 token for escrow contract.
+   * 
+   * @param tokenAddress - ERC20 token address (e.g., USDC)
+   * @param escrowContractAddress - Escrow contract address
+   * @param amount - Amount to approve (use MaxUint256 for unlimited)
+   * @returns Transaction hash
+   */
+  async approveToken(
+    tokenAddress: string,
+    escrowContractAddress: string,
+    amount: bigint = MaxUint256,
+  ): Promise<{ hash: string }> {
+    if (!this.signer || !tokenAddress || !escrowContractAddress) {
+      throw new ApiException(
+        "contract_execution_failed",
+        "Cannot approve token: signer, token address, or contract address not available",
+        500,
+      );
+    }
+
+    try {
+      const tokenContract = new Contract(
+        tokenAddress,
+        ERC20_ABI,
+        this.signer,
+      ) as any;
+
+      // Check current allowance
+      const currentAllowance = await tokenContract.allowance(
+        this.signer.address,
+        escrowContractAddress,
+      );
+
+      // If allowance is sufficient, skip approval
+      if (currentAllowance >= amount) {
+        this.logger.log(
+          `Token already approved: ${currentAllowance.toString()} >= ${amount.toString()}`,
+        );
+        return { hash: "0x0000000000000000000000000000000000000000000000000000000000000000" };
+      }
+
+      this.logger.log(
+        `Approving ${amount.toString()} tokens for escrow contract ${escrowContractAddress}`,
+      );
+
+      const txResponse = await tokenContract.approve(escrowContractAddress, amount) as ContractTransactionResponse;
+      const receipt = await txResponse.wait();
+
+      this.logger.log(
+        `Token approval transaction confirmed: ${txResponse.hash} at block ${receipt?.blockNumber || 0}`,
+      );
+
+      return { hash: txResponse.hash };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      this.logger.error(`Failed to approve token: ${message}`);
+      throw new ApiException(
+        "contract_execution_failed",
+        `Failed to approve token: ${message}`,
+        500,
+      );
+    }
+  }
+
+  /**
+   * Deposit stablecoins into escrow and create order.
+   * 
+   * This method:
+   * 1. Approves USDC token for escrow contract (if needed)
+   * 2. Creates escrow order on-chain (which transfers tokens to escrow)
+   * 
+   * Note: The escrow contract's createOrder function handles the token transfer internally
+   * after approval.
+   * 
+   * @param params - Order creation parameters
+   * @returns Transaction hash
+   */
+  async depositAndCreateOrder(params: {
+    merchantId: bigint;
+    orderId: bigint;
+    buyer: string;
+    tokenAddress: string;
+    amount: string;
+    decimals: number;
+    deliveryPeriod: number;
+    expectedDeliveryHash: string;
+    autoRelease: boolean;
+    deliveryOracle: string;
+    contractAddress: string;
+  }): Promise<{ hash: string }> {
+    if (!this.signer || !params.contractAddress) {
+      throw new ApiException(
+        "contract_execution_failed",
+        "Cannot create order: signer or contract address not available",
+        500,
+      );
+    }
+
+    try {
+      // Step 1: Approve token for escrow contract (if needed)
+      // Use MaxUint256 for unlimited approval (standard practice)
+      await this.approveToken(
+        params.tokenAddress,
+        params.contractAddress,
+        MaxUint256,
+      );
+
+      // Step 2: Create order on escrow contract (which transfers tokens)
+      const contract = new Contract(
+        params.contractAddress,
+        DVPEscrowWithSettlementAbi,
+        this.signer,
+      ) as unknown as DvpEscrowContract;
+
+      const amountInWei = parseUnits(params.amount, params.decimals);
+
+      this.logger.log(
+        `Creating escrow order ${params.orderId.toString()} for merchant ${params.merchantId.toString()}, amount: ${params.amount} tokens`,
+      );
+
+      const txResponse = await contract.createOrder(
+        params.merchantId,
+        params.orderId,
+        params.buyer,
+        params.tokenAddress,
+        amountInWei,
+        params.deliveryPeriod,
+        params.expectedDeliveryHash,
+        params.autoRelease,
+        params.deliveryOracle,
+      ) as unknown as ContractTransactionResponse;
+
+      this.logger.log(
+        `Escrow order creation transaction submitted: ${txResponse.hash} for orderId ${params.orderId.toString()}`,
+      );
+
+      // Wait for transaction to be mined
+      const receipt = await txResponse.wait();
+
+      this.logger.log(
+        `Escrow order created: ${txResponse.hash} at block ${receipt?.blockNumber || 0}`,
+      );
+
+      return { hash: txResponse.hash };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      this.logger.error(
+        `Failed to deposit and create order for orderId ${params.orderId.toString()}: ${message}`,
+      );
+      throw new ApiException(
+        "contract_execution_failed",
+        `Failed to deposit and create order: ${message}`,
+        500,
+      );
     }
   }
 

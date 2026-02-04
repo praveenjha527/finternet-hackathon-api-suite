@@ -8,19 +8,19 @@ datasource db {
 }
 
 model Merchant {
-  id        String   @id @default(uuid())
-  name      String
-  apiKey    String   @unique
-  isActive  Boolean  @default(true)
-  
+  id       String  @id @default(uuid())
+  name     String
+  apiKey   String  @unique
+  isActive Boolean @default(true)
+
   // Contract addresses for payment types
-  dvpContractAddress          String?  // DvP (Delivery vs Payment) contract address
+  dvpContractAddress           String? // DvP (Delivery vs Payment) contract address
   consentedPullContractAddress String? // Consented Pull contract address
-  
+
   // Escrow contract mappings (for programmable payments)
-  contractMerchantId  String?  // Numeric merchant ID in the escrow contract (stored as string for BigInt compatibility)
-  merchantAddress     String?  // On-chain merchant address for escrow contracts
-  
+  contractMerchantId String? // Numeric merchant ID in the escrow contract (stored as string for BigInt compatibility)
+  merchantAddress    String? // On-chain merchant address for escrow contracts
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -30,19 +30,19 @@ model Merchant {
 }
 
 model PaymentIntent {
-  id                    String   @id
-  object                String   @default("payment_intent")
-  status                String
+  id     String @id
+  object String @default("payment_intent")
+  status String
 
   // Merchant/Account
-  merchantId            String
-  merchant              Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  merchantId String
+  merchant   Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
 
   // Payment details
-  amount                String
-  currency              String
-  type                  String
-  description           String?
+  amount      String
+  currency    String
+  type        String
+  description String?
 
   // Settlement
   settlementMethod      String
@@ -50,77 +50,90 @@ model PaymentIntent {
   settlementStatus      String?
 
   // Blockchain
-  contractAddress       String?
-  transactionHash       String?
-  chainId               Int?
+  contractAddress String?
+  transactionHash String?
+  chainId         Int?
 
   // EIP-712
-  typedData             Json?
-  signature             String?
-  signerAddress         String?
+  typedData     Json?
+  signature     String?
+  signerAddress String?
 
   // Progress / phases (for Stripe-like status introspection)
-  phases                Json?
+  phases Json?
 
   // Metadata
-  metadata              Json?
+  metadata Json?
 
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  // Payment Processor (Web2 payments)
+  paymentProcessorType   String? // 'mocked_stripe', etc.
+  paymentProcessorTxId   String? // Payment processor transaction ID
+  fiatPaymentStatus      String? // 'pending', 'succeeded', 'failed'
+  fiatPaymentConfirmedAt DateTime?
+
+  // On-Ramp (Fiat → Crypto)
+  onRampStatus       String? // 'pending', 'completed', 'failed'
+  onRampTxId         String? // On-ramp transaction ID
+  onRampCompletedAt  DateTime?
+  stablecoinAmount   String? // Amount in stablecoins
+  stablecoinCurrency String? // 'USDC'
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Audit trail
-  auditLogs             AuditLog[]
-  
+  auditLogs AuditLog[]
+
   // Escrow order tracking (for programmable payments)
-  escrowOrder           EscrowOrder?
+  escrowOrder EscrowOrder?
 }
 
 model AuditLog {
-  id                    String   @id @default(uuid())
-  
+  id String @id @default(uuid())
+
   // Related entities
-  paymentIntentId       String
-  paymentIntent         PaymentIntent @relation(fields: [paymentIntentId], references: [id], onDelete: Cascade)
-  merchantId            String
-  
+  paymentIntentId String
+  paymentIntent   PaymentIntent @relation(fields: [paymentIntentId], references: [id], onDelete: Cascade)
+  merchantId      String
+
   // Event type and category
-  eventType             String   // e.g., "INTENT_CREATED", "BLOCKCHAIN_TX_SUBMITTED", "BLOCKCHAIN_TX_CONFIRMED", "SETTLEMENT_INITIATED", "SETTLEMENT_COMPLETED", "STATUS_CHANGED"
-  category              String   // "ON_CHAIN", "OFF_RAMP", "LIFECYCLE", "AUTHORIZATION"
-  
+  eventType String // e.g., "INTENT_CREATED", "BLOCKCHAIN_TX_SUBMITTED", "BLOCKCHAIN_TX_CONFIRMED", "SETTLEMENT_INITIATED", "SETTLEMENT_COMPLETED", "STATUS_CHANGED"
+  category  String // "ON_CHAIN", "OFF_RAMP", "LIFECYCLE", "AUTHORIZATION"
+
   // Money movement details
-  amount                String?  // Amount involved in this event
-  currency              String?  // Currency code
-  
+  amount   String? // Amount involved in this event
+  currency String? // Currency code
+
   // On-chain details
-  blockchainTxHash      String?  // Blockchain transaction hash
-  blockchainTxStatus    String?  // "PENDING", "CONFIRMED", "FAILED"
-  contractAddress       String?  // Smart contract address
-  chainId               Int?     // Chain ID
-  blockNumber           BigInt?  // Block number (if confirmed)
-  blockTimestamp        DateTime? // Block timestamp
-  
+  blockchainTxHash   String? // Blockchain transaction hash
+  blockchainTxStatus String? // "PENDING", "CONFIRMED", "FAILED"
+  contractAddress    String? // Smart contract address
+  chainId            Int? // Chain ID
+  blockNumber        BigInt? // Block number (if confirmed)
+  blockTimestamp     DateTime? // Block timestamp
+
   // Off-ramp/Settlement details
-  settlementMethod      String?  // Settlement method used
-  settlementDestination String?  // Where funds were settled
-  settlementTxId        String?  // Settlement transaction ID (from offramp provider)
-  settlementStatus      String?  // Settlement status
-  
+  settlementMethod      String? // Settlement method used
+  settlementDestination String? // Where funds were settled
+  settlementTxId        String? // Settlement transaction ID (from offramp provider)
+  settlementStatus      String? // Settlement status
+
   // Event details
-  fromStatus            String?  // Previous status (for status changes)
-  toStatus              String?  // New status (for status changes)
-  phase                 String?  // Payment phase (if applicable)
-  phaseStatus           String?  // Phase status
-  
+  fromStatus  String? // Previous status (for status changes)
+  toStatus    String? // New status (for status changes)
+  phase       String? // Payment phase (if applicable)
+  phaseStatus String? // Phase status
+
   // Actor information
-  actorType             String?  // "MERCHANT", "PAYER", "SYSTEM", "BLOCKCHAIN"
-  actorId               String?  // ID of the actor (merchant ID, payer address, etc.)
-  
+  actorType String? // "MERCHANT", "PAYER", "SYSTEM", "BLOCKCHAIN"
+  actorId   String? // ID of the actor (merchant ID, payer address, etc.)
+
   // Additional context
-  metadata              Json?    // Additional event-specific data
-  
+  metadata Json? // Additional event-specific data
+
   // Timestamps
-  createdAt             DateTime @default(now())
-  
+  createdAt DateTime @default(now())
+
   @@index([paymentIntentId])
   @@index([merchantId])
   @@index([eventType])
@@ -139,16 +152,16 @@ model MerchantFiatAccount {
   pendingBalance    String   @default("0") // Funds pending settlement
   reservedBalance   String   @default("0") // Funds reserved for in-flight transactions
   accountNumber     String   @unique // Simulated bank account number
-  routingNumber     String?  // For US accounts
-  bankName          String?  // Simulated bank name
-  accountHolderName String?  // Account holder name
+  routingNumber     String? // For US accounts
+  bankName          String? // Simulated bank name
+  accountHolderName String? // Account holder name
   country           String   @default("US") // ISO country code
   isActive          Boolean  @default(true)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  merchant          Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-  ledgerEntries     LedgerEntry[]
+  merchant      Merchant      @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  ledgerEntries LedgerEntry[]
 
   @@index([merchantId])
   @@index([currency])
@@ -172,7 +185,7 @@ model LedgerEntry {
   metadata              Json? // Additional transaction details
   createdAt             DateTime @default(now())
 
-  fiatAccount           MerchantFiatAccount @relation(fields: [fiatAccountId], references: [id], onDelete: Cascade)
+  fiatAccount MerchantFiatAccount @relation(fields: [fiatAccountId], references: [id], onDelete: Cascade)
 
   @@index([fiatAccountId])
   @@index([paymentIntentId])
@@ -183,56 +196,56 @@ model LedgerEntry {
 
 // Escrow Order - Maps PaymentIntent to contract orderId and tracks order lifecycle
 model EscrowOrder {
-  id                    String   @id @default(uuid())
-  paymentIntentId       String   @unique // One-to-one with PaymentIntent
-  orderId               String   // Contract orderId (BigInt as string)
-  merchantId            String
-  contractAddress       String   // Escrow contract address
-  
+  id              String @id @default(uuid())
+  paymentIntentId String @unique // One-to-one with PaymentIntent
+  orderId         String // Contract orderId (BigInt as string)
+  merchantId      String
+  contractAddress String // Escrow contract address
+
   // Order details
-  buyerAddress          String   // Buyer's wallet address
-  tokenAddress          String   // ERC-20 token address
-  amount                String   // Order amount (decimal as string)
-  deliveryPeriod        Int      // Delivery period in seconds
-  deliveryDeadline      String   // Unix timestamp (BigInt as string)
-  expectedDeliveryHash  String?  // Expected delivery hash (bytes32)
-  actualDeliveryHash    String?  // Actual delivery hash from proof
-  autoReleaseOnProof    Boolean  @default(true)
-  deliveryOracle        String?  // Delivery oracle address (optional)
-  
+  buyerAddress         String // Buyer's wallet address
+  tokenAddress         String // ERC-20 token address
+  amount               String // Order amount (decimal as string)
+  deliveryPeriod       Int // Delivery period in seconds
+  deliveryDeadline     String // Unix timestamp (BigInt as string)
+  expectedDeliveryHash String? // Expected delivery hash (bytes32)
+  actualDeliveryHash   String? // Actual delivery hash from proof
+  autoReleaseOnProof   Boolean @default(true)
+  deliveryOracle       String? // Delivery oracle address (optional)
+
   // Release mechanism type (programmable payment support)
-  releaseType           String   @default("DELIVERY_PROOF") // TIME_LOCKED, MILESTONE_LOCKED, DELIVERY_PROOF, AUTO_RELEASE
-  timeLockUntil         String?  // Unix timestamp for time-locked releases (BigInt as string)
-  
+  releaseType   String  @default("DELIVERY_PROOF") // TIME_LOCKED, MILESTONE_LOCKED, DELIVERY_PROOF, AUTO_RELEASE
+  timeLockUntil String? // Unix timestamp for time-locked releases (BigInt as string)
+
   // Order status tracking
-  orderStatus           String   @default("PENDING") // PENDING, SHIPPED, DELIVERED, COMPLETED, CANCELLED, DISPUTED
-  settlementStatus      String   @default("NONE")    // NONE, SCHEDULED, EXECUTED, CONFIRMED, CANCELLED
-  
+  orderStatus      String @default("PENDING") // PENDING, SHIPPED, DELIVERED, COMPLETED, CANCELLED, DISPUTED
+  settlementStatus String @default("NONE") // NONE, SCHEDULED, EXECUTED, CONFIRMED, CANCELLED
+
   // Dispute resolution
-  disputeWindow         String?  // Dispute window period in seconds (BigInt as string, from contract)
-  disputeRaisedAt       String?  // When dispute was raised (Unix timestamp)
-  disputeReason         String?  // Reason for dispute
-  disputeRaisedBy       String?  // Address that raised the dispute
-  disputeResolvedAt     String?  // When dispute was resolved (Unix timestamp)
-  disputeResolution     String?  // MERCHANT_WON, BUYER_WON, PARTIAL_REFUND
+  disputeWindow           String? // Dispute window period in seconds (BigInt as string, from contract)
+  disputeRaisedAt         String? // When dispute was raised (Unix timestamp)
+  disputeReason           String? // Reason for dispute
+  disputeRaisedBy         String? // Address that raised the dispute
+  disputeResolvedAt       String? // When dispute was resolved (Unix timestamp)
+  disputeResolution       String? // MERCHANT_WON, BUYER_WON, PARTIAL_REFUND
   disputeResolutionTxHash String? // Transaction hash of dispute resolution
-  
+
   // Timestamps
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
-  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   // Blockchain transaction
-  createTxHash          String?  // Transaction hash that created the order
-  releasedAt            String?  // When funds were released (Unix timestamp)
-  settlementScheduledAt String?  // When settlement was scheduled (Unix timestamp)
-  
+  createTxHash          String? // Transaction hash that created the order
+  releasedAt            String? // When funds were released (Unix timestamp)
+  settlementScheduledAt String? // When settlement was scheduled (Unix timestamp)
+
   // Relations
-  paymentIntent         PaymentIntent @relation(fields: [paymentIntentId], references: [id], onDelete: Cascade)
-  merchant              Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-  deliveryProofs        DeliveryProof[]
-  milestones            PaymentMilestone[]
-  settlementExecution   SettlementExecution?
-  
+  paymentIntent       PaymentIntent        @relation(fields: [paymentIntentId], references: [id], onDelete: Cascade)
+  merchant            Merchant             @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  deliveryProofs      DeliveryProof[]
+  milestones          PaymentMilestone[]
+  settlementExecution SettlementExecution?
+
   @@index([paymentIntentId])
   @@index([merchantId])
   @@index([orderId])
@@ -246,23 +259,23 @@ model EscrowOrder {
 
 // Delivery Proof - Tracks delivery proofs submitted for escrow orders
 model DeliveryProof {
-  id                    String   @id @default(uuid())
-  escrowOrderId         String
-  paymentIntentId       String   // For convenience/indexing
-  
-  proofHash             String   // Delivery proof hash (bytes32)
-  proofURI              String?  // URI to delivery proof (IPFS, HTTP, etc.)
-  submittedBy           String   // Address that submitted the proof
-  submittedAt           String   // Unix timestamp (BigInt as string)
-  
+  id              String @id @default(uuid())
+  escrowOrderId   String
+  paymentIntentId String // For convenience/indexing
+
+  proofHash   String // Delivery proof hash (bytes32)
+  proofURI    String? // URI to delivery proof (IPFS, HTTP, etc.)
+  submittedBy String // Address that submitted the proof
+  submittedAt String // Unix timestamp (BigInt as string)
+
   // Blockchain transaction
-  submitTxHash          String?  // Transaction hash that submitted the proof
-  
-  createdAt             DateTime @default(now())
-  
+  submitTxHash String? // Transaction hash that submitted the proof
+
+  createdAt DateTime @default(now())
+
   // Relations
-  escrowOrder           EscrowOrder @relation(fields: [escrowOrderId], references: [id], onDelete: Cascade)
-  
+  escrowOrder EscrowOrder @relation(fields: [escrowOrderId], references: [id], onDelete: Cascade)
+
   @@index([escrowOrderId])
   @@index([paymentIntentId])
   @@index([proofHash])
@@ -272,28 +285,28 @@ model DeliveryProof {
 
 // Settlement Execution - Tracks settlement executions for escrow orders
 model SettlementExecution {
-  id                    String   @id @default(uuid())
-  escrowOrderId         String   @unique // One-to-one with EscrowOrder
-  paymentIntentId       String   // For convenience/indexing
-  merchantId            String
-  
-  merchantAddress       String   // Merchant's on-chain address
-  amount                String   // Settlement amount (decimal as string)
-  executedAt            String   // Unix timestamp (BigInt as string)
-  executedBy            String   // Address that executed the settlement
-  txHash                String?  // Settlement transaction hash (bytes32)
-  status                String   @default("EXECUTED") // EXECUTED, CONFIRMED, CANCELLED
-  
+  id              String @id @default(uuid())
+  escrowOrderId   String @unique // One-to-one with EscrowOrder
+  paymentIntentId String // For convenience/indexing
+  merchantId      String
+
+  merchantAddress String // Merchant's on-chain address
+  amount          String // Settlement amount (decimal as string)
+  executedAt      String // Unix timestamp (BigInt as string)
+  executedBy      String // Address that executed the settlement
+  txHash          String? // Settlement transaction hash (bytes32)
+  status          String  @default("EXECUTED") // EXECUTED, CONFIRMED, CANCELLED
+
   // Off-ramp details
-  offrampDestination    String?  // Destination address for off-ramp
-  offrampData           String?  // Off-ramp data (bytes, stored as hex string)
-  
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
-  
+  offrampDestination String? // Destination address for off-ramp
+  offrampData        String? // Off-ramp data (bytes, stored as hex string)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   // Relations
-  escrowOrder           EscrowOrder @relation(fields: [escrowOrderId], references: [id], onDelete: Cascade)
-  
+  escrowOrder EscrowOrder @relation(fields: [escrowOrderId], references: [id], onDelete: Cascade)
+
   @@index([escrowOrderId])
   @@index([paymentIntentId])
   @@index([merchantId])
@@ -304,40 +317,38 @@ model SettlementExecution {
 
 // Payment Milestone - Tracks milestone-based releases for programmable payments
 model PaymentMilestone {
-  id                    String   @id @default(uuid())
-  escrowOrderId         String
-  paymentIntentId       String   // For convenience/indexing
-  
-  milestoneIndex        Int      // Order of milestone (0, 1, 2, ...)
-  description           String?  // Milestone description
-  amount                String   // Amount to be released for this milestone (decimal as string)
-  percentage            Int?     // Percentage of total amount (optional, for clarity)
-  
+  id              String @id @default(uuid())
+  escrowOrderId   String
+  paymentIntentId String // For convenience/indexing
+
+  milestoneIndex Int // Order of milestone (0, 1, 2, ...)
+  description    String? // Milestone description
+  amount         String // Amount to be released for this milestone (decimal as string)
+  percentage     Int? // Percentage of total amount (optional, for clarity)
+
   // Milestone status
-  status                String   @default("PENDING") // PENDING, COMPLETED, RELEASED, CANCELLED
-  completionProof       String?  // Proof of milestone completion (hash, URI, etc.)
-  completionProofURI    String?  // URI to completion proof (IPFS, HTTP, etc.)
-  
+  status             String  @default("PENDING") // PENDING, COMPLETED, RELEASED, CANCELLED
+  completionProof    String? // Proof of milestone completion (hash, URI, etc.)
+  completionProofURI String? // URI to completion proof (IPFS, HTTP, etc.)
+
   // Release tracking
-  releasedAt            String?  // When milestone amount was released (Unix timestamp)
-  releaseTxHash         String?  // Transaction hash that released milestone funds
-  releasedBy            String?  // Address that triggered the release
-  
+  releasedAt    String? // When milestone amount was released (Unix timestamp)
+  releaseTxHash String? // Transaction hash that released milestone funds
+  releasedBy    String? // Address that triggered the release
+
   // Completion tracking
-  completedAt           String?  // When milestone was marked complete (Unix timestamp)
-  completedBy           String?  // Address that marked milestone complete
-  
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
-  
+  completedAt String? // When milestone was marked complete (Unix timestamp)
+  completedBy String? // Address that marked milestone complete
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   // Relations
-  escrowOrder           EscrowOrder @relation(fields: [escrowOrderId], references: [id], onDelete: Cascade)
-  
+  escrowOrder EscrowOrder @relation(fields: [escrowOrderId], references: [id], onDelete: Cascade)
+
   @@unique([escrowOrderId, milestoneIndex]) // Ensure unique milestone indices per order
   @@index([escrowOrderId])
   @@index([paymentIntentId])
   @@index([status])
   @@index([createdAt])
 }
-
-
