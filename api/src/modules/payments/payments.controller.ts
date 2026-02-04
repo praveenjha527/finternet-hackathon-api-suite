@@ -1,5 +1,5 @@
-import { Body, Controller, Get, HttpCode, Param, Post, ValidationPipe } from "@nestjs/common";
-import { ApiParam, ApiTags, ApiSecurity } from "@nestjs/swagger";
+import { Body, Controller, Get, HttpCode, Param, Post, Query, ValidationPipe } from "@nestjs/common";
+import { ApiParam, ApiQuery, ApiTags, ApiSecurity } from "@nestjs/swagger";
 import { PaymentsService } from "./payments.service";
 import type { ApiResponse } from "../../common/responses";
 import { CreatePaymentIntentDto } from "./dto/create-payment-intent.dto";
@@ -26,6 +26,45 @@ type Merchant = {
 @Controller("payment-intents")
 export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
+
+  /**
+   * Get merchant fiat account balance (available, pending, reserved, total).
+   */
+  @Get("account/balance")
+  async getBalance(@CurrentMerchant() merchant: Merchant) {
+    const balance = await this.paymentsService.getBalance(merchant.id);
+    return {
+      object: "balance",
+      data: balance,
+    };
+  }
+
+  /**
+   * Get ledger entries for the merchant's fiat account.
+   */
+  @Get("account/ledger-entries")
+  @ApiQuery({ name: "limit", required: false, type: Number })
+  @ApiQuery({ name: "offset", required: false, type: Number })
+  @ApiQuery({ name: "transactionType", required: false, type: String })
+  @ApiQuery({ name: "paymentIntentId", required: false, type: String })
+  async getLedgerEntries(
+    @CurrentMerchant() merchant: Merchant,
+    @Query("limit") limit?: string,
+    @Query("offset") offset?: string,
+    @Query("transactionType") transactionType?: string,
+    @Query("paymentIntentId") paymentIntentId?: string,
+  ) {
+    const entries = await this.paymentsService.getLedgerEntries(merchant.id, {
+      limit: limit != null ? parseInt(limit, 10) : undefined,
+      offset: offset != null ? parseInt(offset, 10) : undefined,
+      transactionType,
+      paymentIntentId,
+    });
+    return {
+      object: "list",
+      data: entries,
+    };
+  }
 
   @Post()
   async createPaymentIntent(

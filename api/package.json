@@ -18,7 +18,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "ts-node prisma/seed.ts",
     "check:merchants": "bun run scripts/check-merchant-status.ts",
-    "whitelist:token": "bun run scripts/whitelist-token.ts"
+    "whitelist:token": "bun run scripts/whitelist-token.ts",
+    "generate:merchant-keys": "bun run scripts/generate-merchant-keys.ts"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
@@ -42,7 +43,8 @@
     "reflect-metadata": "^0.1.13",
     "rxjs": "^7.8.1",
     "uuid": "^9.0.0",
-    "winston": "^3.11.0"
+    "winston": "^3.11.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.0.0",

@@ -192,6 +192,13 @@ frontend/dist/
 frontend/dist-ssr/
 api/dist2/**/*
 
+# Temp Files 
+api/scripts/*.xlsx
+api/scripts/*.csv
+*.xlsx
+*.csv
+
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
