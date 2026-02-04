@@ -408,20 +408,18 @@ export class IntentService {
 
     // Create escrow order if needed (for DELIVERY_VS_PAYMENT type)
     // This should be created when transaction hash is set, regardless of confirmation status
-    if (saved.type === "DELIVERY_VS_PAYMENT") {
-      try {
-        await this.createEscrowOrderIfNeeded(saved);
-        this.logger.log(
-          `Escrow order created/verified for payment intent ${saved.id}`,
-        );
-      } catch (error) {
-        // Log error but don't fail the transaction hash update
-        // Escrow order creation failure shouldn't prevent confirmation checking
-        this.logger.error(
-          `Failed to create escrow order for payment intent ${saved.id}:`,
-          error instanceof Error ? error.message : String(error),
-        );
-      }
+    try {
+      await this.createEscrowOrderIfNeeded(saved);
+      this.logger.log(
+        `Escrow order created/verified for payment intent ${saved.id}`,
+      );
+    } catch (error) {
+      // Log error but don't fail the transaction hash update
+      // Escrow order creation failure shouldn't prevent confirmation checking
+      this.logger.error(
+        `Failed to create escrow order for payment intent ${saved.id}:`,
+        error instanceof Error ? error.message : String(error),
+      );
     }
 
     // Enqueue job to check transaction confirmations and update status asynchronously

@@ -231,6 +231,7 @@ export class PaymentsService {
   /**
    * Create escrow order for Web2 payment flow.
    * This method deposits stablecoins into escrow and creates the order.
+   * When SKIP_CHAIN_ESCROW=true (e.g. local dev), creates DB escrow only with mock tx hash so milestones work.
    */
   private async createEscrowOrderForWeb2Payment(
     intentId: string,
@@ -238,6 +239,7 @@ export class PaymentsService {
   ): Promise<void> {
     const metadata = (paymentIntent.metadata as Record<string, unknown>) || {};
     const merchantId = (paymentIntent as any).merchantId;
+    const skipChain = process.env.SKIP_CHAIN_ESCROW === "true";
 
     // Get merchant details
     const merchant = await this.prisma.merchant.findUnique({
@@ -266,29 +268,13 @@ export class PaymentsService {
       process.env.TOKEN_ADDRESS ||
       "0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8";
 
-    // For Web2 payments, buyer address is the system wallet address (which holds the funds)
-    // The system wallet deposits funds on behalf of the user
-    const privateKey = process.env.PRIVATE_KEY;
-    if (!privateKey) {
-      throw new ApiException(
-        "configuration_error",
-        "System wallet not configured (PRIVATE_KEY not set)",
-        500,
-      );
-    }
-    
-    // Import Wallet to derive address
-    const { Wallet } = await import("ethers");
-    const systemWallet = new Wallet(privateKey);
-    const buyerAddress = systemWallet.address;
-
-    // Get contract address
     const contractAddress =
       paymentIntent.contractAddress ||
-      merchant.dvpContractAddress ||
-      process.env.DvP_CONTRACT_ADDRESS;
+      (merchant as any).dvpContractAddress ||
+      process.env.DvP_CONTRACT_ADDRESS ||
+      (skipChain ? "0x0000000000000000000000000000000000000000" : null);
 
-    if (!contractAddress) {
+    if (!contractAddress && !skipChain) {
       throw new ApiException(
         "configuration_error",
         "Escrow contract address not found",
@@ -296,12 +282,21 @@ export class PaymentsService {
       );
     }
 
-    // Get contract merchant ID
-    const contractMerchantId = await this.escrowService.getContractMerchantId(
-      merchantId,
-    );
+    let buyerAddress: string;
+    if (skipChain && !process.env.PRIVATE_KEY) {
+      buyerAddress = "0x5D478B369769183F05b70bb7a609751c419b4c04";
+    } else if (process.env.PRIVATE_KEY) {
+      const { Wallet } = await import("ethers");
+      buyerAddress = new Wallet(process.env.PRIVATE_KEY).address;
+    } else {
+      throw new ApiException(
+        "configuration_error",
+        "System wallet not configured (PRIVATE_KEY not set). Set SKIP_CHAIN_ESCROW=true for dev without chain.",
+        500,
+      );
+    }
 
-    // Get order ID
+    // Get order ID (needed for DB escrow)
     const orderId = await this.escrowService.getOrderIdForIntent(intentId);
 
     // Determine release type
@@ -318,52 +313,66 @@ export class PaymentsService {
             ? "AUTO_RELEASE"
             : "DELIVERY_PROOF";
 
-    // Calculate delivery deadline
     const now = Math.floor(Date.now() / 1000);
     const deliveryDeadline = BigInt(now + deliveryPeriod).toString();
-
-    // Use stablecoin amount from on-ramp
     const stablecoinAmount = paymentIntent.stablecoinAmount || paymentIntent.amount;
-    const stablecoinDecimals = 6; // USDC has 6 decimals
 
-    // Step 1: Deposit stablecoins and create order on-chain
-    const depositResult = await this.escrowService.depositAndCreateOrder({
-      merchantId: contractMerchantId,
-      orderId,
-      buyer: buyerAddress,
-      tokenAddress,
-      amount: stablecoinAmount,
-      decimals: stablecoinDecimals,
-      deliveryPeriod,
-      expectedDeliveryHash,
-      autoRelease,
-      deliveryOracle,
-      contractAddress,
-    });
+    const createEscrowDb = (createTxHash: string) =>
+      this.escrowOrderService.createEscrowOrder({
+        paymentIntentId: intentId,
+        merchantId,
+        contractAddress: contractAddress!,
+        buyerAddress,
+        tokenAddress,
+        amount: stablecoinAmount,
+        deliveryPeriod,
+        deliveryDeadline,
+        expectedDeliveryHash,
+        autoReleaseOnProof: autoRelease,
+        deliveryOracle,
+        releaseType,
+        createTxHash,
+        timeLockUntil:
+          releaseType === "TIME_LOCKED" && metadata.timeLockUntil
+            ? (metadata.timeLockUntil as string)
+            : undefined,
+        disputeWindow: metadata.disputeWindow
+          ? (metadata.disputeWindow as string)
+          : "604800",
+      });
 
-    // Step 2: Create escrow order in database
-    await this.escrowOrderService.createEscrowOrder({
-      paymentIntentId: intentId,
+    if (skipChain) {
+      await createEscrowDb("0xdev-skip-chain");
+      return;
+    }
+
+    const contractMerchantId = await this.escrowService.getContractMerchantId(
       merchantId,
-      contractAddress,
-      buyerAddress,
-      tokenAddress,
-      amount: stablecoinAmount,
-      deliveryPeriod,
-      deliveryDeadline,
-      expectedDeliveryHash,
-      autoReleaseOnProof: autoRelease,
-      deliveryOracle,
-      releaseType,
-      createTxHash: depositResult.hash,
-      timeLockUntil:
-        releaseType === "TIME_LOCKED" && metadata.timeLockUntil
-          ? (metadata.timeLockUntil as string)
-          : undefined,
-      disputeWindow: metadata.disputeWindow
-        ? (metadata.disputeWindow as string)
-        : "604800", // Default 7 days
-    });
+    );
+    const stablecoinDecimals = 6;
+
+    try {
+      const depositResult = await this.escrowService.depositAndCreateOrder({
+        merchantId: contractMerchantId,
+        orderId,
+        buyer: buyerAddress,
+        tokenAddress,
+        amount: stablecoinAmount,
+        decimals: stablecoinDecimals,
+        deliveryPeriod,
+        expectedDeliveryHash,
+        autoRelease,
+        deliveryOracle,
+        contractAddress: contractAddress!,
+      });
+      await createEscrowDb(depositResult.hash);
+    } catch (error) {
+      if (process.env.SKIP_CHAIN_ESCROW === "true") {
+        await createEscrowDb("0xdev-skip-chain");
+        return;
+      }
+      throw error;
+    }
   }
 
   /**
