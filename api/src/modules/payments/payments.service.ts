@@ -12,8 +12,11 @@ import { EscrowOrderService } from "./services/escrow-order.service";
 import { EscrowService } from "./services/escrow.service";
 import { PaymentProcessorService } from "./services/payment-processor.service";
 import { OnRampService } from "./services/on-ramp.service";
+import { FiatAccountService } from "./services/fiat-account.service";
+import { LedgerService } from "./services/ledger.service";
 import { PrismaService } from "../../prisma/prisma.service";
 import { ApiException } from "../../common/exceptions";
+import type { FiatAccountBalance } from "./services/fiat-account.service";
 
 @Injectable()
 export class PaymentsService {
@@ -23,8 +26,32 @@ export class PaymentsService {
     private readonly escrowService: EscrowService,
     private readonly paymentProcessor: PaymentProcessorService,
     private readonly onRamp: OnRampService,
+    private readonly fiatAccountService: FiatAccountService,
+    private readonly ledgerService: LedgerService,
     private readonly prisma: PrismaService,
   ) {}
+
+  /**
+   * Get merchant fiat account balance (available, pending, reserved, total).
+   */
+  async getBalance(merchantId: string): Promise<FiatAccountBalance> {
+    return this.fiatAccountService.getBalance(merchantId);
+  }
+
+  /**
+   * Get ledger entries for the merchant's fiat account.
+   */
+  async getLedgerEntries(
+    merchantId: string,
+    options?: {
+      limit?: number;
+      offset?: number;
+      transactionType?: string;
+      paymentIntentId?: string;
+    },
+  ) {
+    return this.ledgerService.getLedgerEntries(merchantId, options);
+  }
 
   async createIntent(
     dto: CreatePaymentIntentDto,

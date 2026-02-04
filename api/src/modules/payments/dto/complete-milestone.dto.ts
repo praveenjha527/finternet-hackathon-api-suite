@@ -2,7 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { IsNotEmpty, IsOptional, IsString } from "class-validator";
 
 export class CompleteMilestoneDto {
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: "proof_0xabcdef123456...",
     description: "Proof of milestone completion (hash)",
   })
