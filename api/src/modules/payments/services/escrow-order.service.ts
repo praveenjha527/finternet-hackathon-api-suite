@@ -85,6 +85,10 @@ export class EscrowOrderService {
     // Get orderId from PaymentIntent ID
     const orderId = (await this.escrow.getOrderIdForIntent(dto.paymentIntentId)).toString();
 
+    // Coerce autoReleaseOnProof to boolean (may come as string "true"/"false" from metadata)
+    const autoReleaseOnProof =
+      dto.autoReleaseOnProof === true || dto.autoReleaseOnProof === "true";
+
     // Create escrow order in database
     const escrowOrder = await this.prisma.escrowOrder.create({
       data: {
@@ -98,7 +102,7 @@ export class EscrowOrderService {
         deliveryPeriod: dto.deliveryPeriod,
         deliveryDeadline: dto.deliveryDeadline,
         expectedDeliveryHash: dto.expectedDeliveryHash,
-        autoReleaseOnProof: dto.autoReleaseOnProof,
+        autoReleaseOnProof,
         deliveryOracle: dto.deliveryOracle,
         releaseType: dto.releaseType,
         timeLockUntil: dto.timeLockUntil,
