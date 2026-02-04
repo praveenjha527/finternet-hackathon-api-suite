@@ -261,7 +261,8 @@ export class ProgrammablePaymentQueueProcessor extends WorkerHost {
     // Check order state from contract and execute settlement if needed
     const escrowOrder = milestone.escrowOrder;
     const orderId = BigInt(escrowOrder.orderId);
-    let settlementExecuted = false;
+    // When no contract (off-chain escrow), treat as ready for settlement
+    let settlementExecuted = !escrowOrder.contractAddress;
 
     if (escrowOrder.contractAddress) {
       try {
@@ -312,12 +313,15 @@ export class ProgrammablePaymentQueueProcessor extends WorkerHost {
         }
       } catch (error) {
         this.logger.error(
-          `Failed to execute on-chain settlement for milestone (orderId ${orderId}):`,
-          error instanceof Error ? error.message : String(error),
+          `Failed to execute on-chain settlement for milestone (orderId ${orderId}): ${error instanceof Error ? error.message : String(error)}. Proceeding to credit merchant and enqueue settlement.`,
         );
-        // Continue with database update even if on-chain execution fails
+        // Even if blockchain failed: credit merchant and enqueue settlement
+        settlementExecuted = true;
       }
     }
+
+    // Milestone was completed – always treat as ready for settlement so payment intent can progress
+    settlementExecuted = true;
 
     // Update milestone status to released
     const currentTimestamp = BigInt(Math.floor(Date.now() / 1000));
@@ -330,7 +334,29 @@ export class ProgrammablePaymentQueueProcessor extends WorkerHost {
       },
     });
 
-    // If settlement was executed, enqueue off-ramp processing
+    // Always credit merchant for this milestone amount (even if on-chain failed)
+    try {
+      await this.ledger.credit(merchantId, milestone.amount, {
+        paymentIntentId,
+        description: `Milestone ${milestone.milestoneIndex} released: ${paymentIntentId}`,
+        metadata: {
+          escrowOrderId,
+          milestoneId,
+          milestoneIndex: milestone.milestoneIndex,
+          releaseType: "MILESTONE",
+        },
+      });
+      this.logger.log(
+        `Merchant ${merchantId} credited ${milestone.amount} for milestone ${milestoneId} (order ${escrowOrderId})`,
+      );
+    } catch (creditError) {
+      this.logger.error(
+        `Failed to credit merchant for milestone ${milestoneId}:`,
+        creditError instanceof Error ? creditError.message : String(creditError),
+      );
+    }
+
+    // Enqueue settlement so payment intent can move to SETTLED (even if on-chain failed)
     if (settlementExecuted && escrowOrder.paymentIntent.settlementMethod === "OFF_RAMP_MOCK") {
       await this.settlementQueue.enqueueSettlement({
         paymentIntentId,
