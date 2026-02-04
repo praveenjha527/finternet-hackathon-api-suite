@@ -380,11 +380,8 @@ export class ProgrammablePaymentQueueProcessor extends WorkerHost {
 
     const escrowOrder = deliveryProof.escrowOrder;
 
-    // Check if auto-release is enabled
-    if (!escrowOrder.autoReleaseOnProof) {
-      this.logger.log(`Auto-release disabled for order ${escrowOrderId}. Manual release required.`);
-      return;
-    }
+    // Delivery proof was submitted via API – always complete order and credit merchant.
+    // (autoReleaseOnProof only affects on-chain auto-release; we still release in our ledger when proof is submitted.)
 
     // Check if already released
     if (escrowOrder.orderStatus === "COMPLETED" && escrowOrder.releasedAt) {
@@ -453,6 +450,9 @@ export class ProgrammablePaymentQueueProcessor extends WorkerHost {
       );
       settlementExecuted = true;
     }
+
+    // Delivery proof was submitted – always treat as ready for settlement so payment intent moves to SETTLED
+    settlementExecuted = true;
 
     // Update order status
     const currentTimestamp = BigInt(Math.floor(Date.now() / 1000));
