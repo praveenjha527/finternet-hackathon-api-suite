@@ -159,17 +159,12 @@ export class ProgrammablePaymentQueueProcessor extends WorkerHost {
       return;
     }
 
-    // Verify order status allows release
-    if (escrowOrder.orderStatus !== "DELIVERED" && escrowOrder.orderStatus !== "SHIPPED") {
-      this.logger.warn(
-        `Cannot release time-locked funds for order ${escrowOrderId}. Status: ${escrowOrder.orderStatus}`,
-      );
-      throw new Error(`Order status ${escrowOrder.orderStatus} does not allow release`);
-    }
+    // Time lock expired – release regardless of order status (no delivery proof required for time-lock)
 
     // Check order state from contract and execute settlement if needed
     const orderId = BigInt(escrowOrder.orderId);
-    let settlementExecuted = false;
+    // When no contract (off-chain escrow), treat as ready for settlement
+    let settlementExecuted = !escrowOrder.contractAddress;
 
     if (escrowOrder.contractAddress) {
       try {
@@ -220,12 +215,15 @@ export class ProgrammablePaymentQueueProcessor extends WorkerHost {
         }
       } catch (error) {
         this.logger.error(
-          `Failed to execute on-chain settlement for time-locked release (orderId ${orderId}):`,
-          error instanceof Error ? error.message : String(error),
+          `Failed to execute on-chain settlement for time-locked release (orderId ${orderId}): ${error instanceof Error ? error.message : String(error)}. Proceeding to credit merchant and enqueue settlement.`,
         );
-        // Continue with database update even if on-chain execution fails
+        // Even if blockchain failed: credit merchant and enqueue settlement
+        settlementExecuted = true;
       }
     }
+
+    // Time lock released – always treat as ready for settlement
+    settlementExecuted = true;
 
     // Update order status to indicate release
     await this.prisma.escrowOrder.update({
@@ -233,11 +231,38 @@ export class ProgrammablePaymentQueueProcessor extends WorkerHost {
       data: {
         releasedAt: currentTimestamp.toString(),
         orderStatus: "COMPLETED",
-        settlementStatus: settlementExecuted ? "EXECUTED" : "NONE",
+        settlementStatus: settlementExecuted ? "SCHEDULED" : "NONE",
       },
     });
 
-    // If settlement was executed, enqueue off-ramp processing
+    // Always credit merchant for time-lock release (even if on-chain failed)
+    try {
+      await this.ledger.credit(merchantId, escrowOrder.amount, {
+        paymentIntentId,
+        description: `Time-lock released: ${paymentIntentId}`,
+        metadata: {
+          escrowOrderId,
+          releaseType: "TIME_LOCK",
+        },
+      });
+      this.logger.log(
+        `Merchant ${merchantId} credited for time-lock release (order ${escrowOrderId})`,
+      );
+    } catch (creditError) {
+      this.logger.error(
+        `Failed to credit merchant for time-lock release (order ${escrowOrderId}):`,
+        creditError instanceof Error ? creditError.message : String(creditError),
+      );
+    }
+
+    // Set payment intent to success state (SUCCEEDED)
+    await this.transitionPaymentIntentToSuccess(
+      paymentIntentId,
+      merchantId,
+      "time-lock released",
+    );
+
+    // Enqueue settlement so payment intent can move to SETTLED (even if on-chain failed)
     if (settlementExecuted && escrowOrder.paymentIntent.settlementMethod === "OFF_RAMP_MOCK") {
       await this.settlementQueue.enqueueSettlement({
         paymentIntentId,
